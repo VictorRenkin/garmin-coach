@@ -1,7 +1,13 @@
 import json
+import threading
+import urllib.request
 from pathlib import Path
 
+import pytest
+
 from garmin_coach import dashboard
+from garmin_coach import coach_chat
+from garmin_coach.config import Settings
 
 
 def test_public_activity_only_exposes_training_metrics() -> None:
@@ -281,3 +287,172 @@ def test_dashboard_chat_supports_confirmable_actions_and_waiting_state() -> None
     assert "event.key==='Enter'&&!event.shiftKey" in html
     assert "requestSubmit()" in html
     assert "AbortController" in html
+    assert "dataset.distance" in html
+    assert 'id="coachMode"' in html
+    assert 'id="coachConfigDialog"' in html
+    assert "/api/coach/status" in html
+    assert "/api/coach/config" in html
+    assert "Mode local · réponses limitées" in html
+    assert "width:min(100%,900px);margin-inline:auto" in html
+
+
+def test_chat_http_endpoint_returns_answer_end_to_end(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(coach_chat, "MESSAGES_FILE", tmp_path / "messages.json")
+    monkeypatch.setattr(coach_chat, "COACH_DRAFTS_DIR", tmp_path / "drafts")
+    monkeypatch.setattr(coach_chat, "ensure_directories", lambda: None)
+    monkeypatch.setattr(
+        dashboard, "load_settings", lambda: Settings(None, None, 300, None)
+    )
+    monkeypatch.setattr(
+        dashboard,
+        "coach_context",
+        lambda: {"objectif": {"title": "Terminer un semi-marathon"}},
+    )
+    server = dashboard.ThreadingHTTPServer(("127.0.0.1", 0), dashboard.DashboardHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{server.server_port}/api/coach/messages",
+            data=json.dumps({"message": "Bonjour"}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=3) as response:
+            payload = json.loads(response.read())
+        assert response.status == 201
+        assert payload["answer"]["role"] == "assistant"
+        assert payload["answer"]["source"] == "local"
+        assert "Bonjour" in payload["answer"]["content"]
+        assert coach_chat.pending_requests() == []
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_coach_status_and_config_http_endpoints_do_not_return_key(monkeypatch) -> None:
+    monkeypatch.setattr(
+        dashboard,
+        "coach_ai_status",
+        lambda: {"configured": False, "model": None},
+    )
+    monkeypatch.setattr(
+        dashboard,
+        "save_coach_ai_config",
+        lambda key: {"configured": bool(key), "model": "test-model"},
+    )
+    server = dashboard.ThreadingHTTPServer(("127.0.0.1", 0), dashboard.DashboardHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{server.server_port}/api/coach/status", timeout=3
+        ) as response:
+            status_payload = json.loads(response.read())
+        assert status_payload == {"configured": False, "model": None}
+
+        secret = "sk-test-secret-that-must-not-leak"
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{server.server_port}/api/coach/config",
+            data=json.dumps({"apiKey": secret}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=3) as response:
+            config_payload = json.loads(response.read())
+        assert config_payload == {
+            "ok": True,
+            "configured": True,
+            "model": "test-model",
+        }
+        assert secret not in json.dumps(config_payload)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+@pytest.mark.parametrize(
+    ("adjustment", "duration", "distance", "session_type"),
+    [
+        ("lighter", 32, 4.8, "intervalles"),
+        ("progressive", 44, 6.6, "intervalles"),
+        ("recovery", 28, 4.2, "récupération"),
+    ],
+)
+def test_adapt_plan_changes_future_sessions(
+    tmp_path, adjustment, duration, distance, session_type
+) -> None:
+    target = tmp_path / "plan.json"
+    target.write_text(
+        json.dumps(
+            {
+                "seances": [
+                    {
+                        "date": "2099-08-01",
+                        "type": "intervalles",
+                        "titre": "Fractions",
+                        "duree_estimee_minutes": 40,
+                        "effort_minutes": 20,
+                        "distance_estimee_km": 6.0,
+                        "garmin": {"workout_id": 42},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = dashboard.adapt_plan(target, adjustment)
+    session = result["plan"]["seances"][0]
+
+    assert result["changed_sessions"] == 1
+    assert session["duree_estimee_minutes"] == duration
+    assert session["distance_estimee_km"] == distance
+    assert session["type"] == session_type
+    assert "garmin" not in session
+    assert "confirmation dans le chat" in result["plan"]["adaptation"]
+
+
+def test_adapt_plan_rejects_unknown_adjustment(tmp_path) -> None:
+    target = tmp_path / "plan.json"
+    target.write_text('{"seances": []}', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="invalide"):
+        dashboard.adapt_plan(target, "dangerous")
+
+
+def test_profile_http_endpoint_does_not_invoke_chat(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(dashboard, "PROFILE_FILE", tmp_path / "profile.json")
+    monkeypatch.setattr(dashboard, "ensure_directories", lambda: None)
+    monkeypatch.setattr(
+        dashboard,
+        "generate_response",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("chat appelé")),
+    )
+    server = dashboard.ThreadingHTTPServer(("127.0.0.1", 0), dashboard.DashboardHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{server.server_port}/api/profile",
+            data=json.dumps(
+                {
+                    "title": "Préparer un 10 km",
+                    "distanceKm": 10,
+                    "sessionsPerWeek": 3,
+                    "raceDate": None,
+                }
+            ).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=3) as response:
+            payload = json.loads(response.read())
+        assert response.status == 200
+        assert payload["objective"]["distanceKm"] == 10
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)

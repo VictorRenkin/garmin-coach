@@ -67,7 +67,8 @@ def test_generate_response_sends_context_and_uses_structured_output(monkeypatch)
     )
 
     payload = json.loads(captured["input"])
-    assert result == expected
+    assert result == expected.model_copy(update={"source": "openai"})
+    assert result.source == "openai"
     assert payload["demande"] == "Je veux quatre séances"
     assert payload["contexte"]["objectif"]["sessionsPerWeek"] == 3
     assert captured["text_format"] is coach_chat.CoachResponse
@@ -76,12 +77,30 @@ def test_generate_response_sends_context_and_uses_structured_output(monkeypatch)
 def test_chat_replies_immediately_without_api_key() -> None:
     response = coach_chat.generate_response(
         {"content": "La séance était difficile"},
-        Settings(None, None, 300, None, "gpt-5.6-luna"),
+        Settings(None, None, 300, None, "gpt-5.6-sol"),
         {"objectif": {"title": "Terminer un semi-marathon"}},
     )
 
     assert "difficile" in response.message
     assert "fatigue" in response.message
+    assert response.source == "local"
+
+
+def test_chat_falls_back_locally_when_openai_is_unavailable(monkeypatch) -> None:
+    class FailingClient:
+        def __init__(self, **kwargs):
+            raise TimeoutError("API indisponible")
+
+    monkeypatch.setattr(coach_chat, "OpenAI", FailingClient)
+    response = coach_chat.generate_response(
+        {"content": "Bonjour"},
+        Settings(None, None, 300, "test-key", "gpt-5.6-sol"),
+        {"objectif": {"title": "Préparer un 10 km"}},
+    )
+
+    assert "Bonjour" in response.message
+    assert "OpenAI est temporairement indisponible" in response.message
+    assert response.source == "local"
 
 
 def test_local_coach_can_propose_an_objective_change() -> None:
@@ -92,6 +111,86 @@ def test_local_coach_can_propose_an_objective_change() -> None:
     assert response.action == "update_objective"
     assert response.objective_update is not None
     assert response.objective_update.distance_km == 10
+
+
+@pytest.mark.parametrize(
+    ("question", "expected"),
+    [
+        ("Réduis la charge, je veux une semaine plus légère", "lighter"),
+        ("Je veux une semaine de récupération", "recovery"),
+        ("Augmente la charge progressivement", "progressive"),
+    ],
+)
+def test_local_coach_proposes_real_plan_adaptations(question, expected) -> None:
+    response = coach_chat.local_response(question, {"plan_actif": {"seances": [{}]}})
+
+    assert response.action == "adapt_plan"
+    assert response.plan_adjustment == expected
+    assert "Confirme" in response.message
+
+
+def test_local_coach_uses_previous_question_to_adapt_the_plan() -> None:
+    context = {
+        "conversation_recente": [
+            {
+                "role": "assistant",
+                "content": "As-tu seulement une fatigue générale, ou aussi une douleur inhabituelle ?",
+            },
+            {"role": "user", "content": "Fatigue seulement, pas de douleur"},
+        ]
+    }
+
+    response = coach_chat.local_response("Fatigue seulement, pas de douleur", context)
+
+    assert response.action == "adapt_plan"
+    assert response.plan_adjustment == "lighter"
+    assert "sans douleur" in response.message
+
+
+@pytest.mark.parametrize(
+    ("question", "expected_fragment", "expected_action"),
+    [
+        ("Bonjour", "Bonjour", "none"),
+        ("Que peux-tu faire ?", "comparer tes courses", "none"),
+        ("Comment était ma dernière course ?", "8.2 km", "none"),
+        ("La séance était facile", "effort facile", "none"),
+        ("La séance était normale", "Ressenti normal", "none"),
+        ("La séance était très difficile", "fatigue générale", "none"),
+        ("J'ai une douleur au genou", "Ne cours pas", "none"),
+        ("J'ai une douleur à la poitrine", "arrêter l'effort", "none"),
+        ("Je veux préparer un 10 km", "10 km", "update_objective"),
+        ("Passe à 4 séances par semaine", "4 séances", "update_objective"),
+        ("Ma course est le 2026-10-04", "2026-10-04", "update_objective"),
+        ("Reporte la séance 2 au 2026-08-04", "déplacer", "reschedule_session"),
+        ("Je ne peux pas courir jeudi", "numéro de la séance", "none"),
+        ("J'ai raté une séance", "rattraper", "none"),
+        ("Réduis la charge cette semaine", "alléger", "adapt_plan"),
+        ("Augmente la charge de 20 %", "progression prudente", "adapt_plan"),
+        ("Je dors mal depuis trois jours", "sommeil", "none"),
+        ("Je pars en vacances", "dates d'absence", "none"),
+        ("Mon allure était de 22 min/km", "mesure erronée", "none"),
+        ("Pourquoi mon cardio monte ?", "chaleur", "none"),
+        ("Merci", "Avec plaisir", "none"),
+    ],
+)
+def test_local_coach_reacts_to_realistic_questions(
+    question, expected_fragment, expected_action
+) -> None:
+    context = {
+        "objectif": {"title": "Terminer un semi-marathon"},
+        "plan_actif": {
+            "seances": [
+                {"date": "2026-07-28", "titre": "Endurance facile"},
+                {"date": "2026-07-30", "titre": "Intervalles"},
+            ]
+        },
+        "courses_recentes": [{"distanceKm": 8.2, "paceSeconds": 360}],
+    }
+
+    response = coach_chat.local_response(question, context)
+
+    assert expected_fragment in response.message
+    assert response.action == expected_action
 
 
 @pytest.mark.parametrize(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import threading
 import webbrowser
 from datetime import date, timedelta
@@ -9,6 +10,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
+
+from dotenv import set_key
 
 from .ai_analysis import load_analysis
 from .activity_data import latest_hr_zone_boundaries, public_detail
@@ -23,7 +26,7 @@ from .coach_chat import (
     store_response,
     submit_message,
 )
-from .config import ACTIVITIES_DIR, PLANS_DIR, PROFILE_FILE, REPORTS_DIR, ensure_directories, load_settings
+from .config import ACTIVITIES_DIR, PLANS_DIR, PROFILE_FILE, REPORTS_DIR, ROOT_DIR, ensure_directories, load_settings
 from .garmin import connect
 from .garmin_workouts import publish_plan
 from .summary import is_running
@@ -45,6 +48,27 @@ DEFAULT_OBJECTIVE = {
     "sessionsPerWeek": 3,
     "raceDate": None,
 }
+
+
+def coach_ai_status() -> dict[str, Any]:
+    settings = load_settings()
+    configured = bool(settings.openai_api_key)
+    return {
+        "configured": configured,
+        "model": settings.openai_model if configured else None,
+    }
+
+
+def save_coach_ai_config(api_key: str) -> dict[str, Any]:
+    key = api_key.strip()
+    if len(key) < 20 or not key.startswith("sk-"):
+        raise ValueError("La clé OpenAI semble invalide.")
+    env_file = ROOT_DIR / ".env"
+    set_key(str(env_file), "OPENAI_API_KEY", key, quote_mode="always")
+    set_key(str(env_file), "OPENAI_MODEL", "gpt-5.6-sol", quote_mode="always")
+    os.environ["OPENAI_API_KEY"] = key
+    os.environ["OPENAI_MODEL"] = "gpt-5.6-sol"
+    return {"configured": True, "model": "gpt-5.6-sol"}
 
 
 def load_objective() -> dict[str, Any]:
@@ -233,6 +257,46 @@ def relevant_plan_path() -> Path | None:
     return None
 
 
+def adapt_plan(target: Path, adjustment: str) -> dict[str, Any]:
+    factors = {"lighter": 0.8, "progressive": 1.1, "recovery": 0.7}
+    if adjustment not in factors:
+        raise ValueError("Adaptation du plan invalide.")
+    payload = json.loads(target.read_text(encoding="utf-8"))
+    sessions = payload.get("seances")
+    if not isinstance(sessions, list):
+        raise ValueError("Aucune séance adaptable dans le plan.")
+    factor = factors[adjustment]
+    changed = 0
+    today = date.today().isoformat()
+    for session in sessions:
+        if not isinstance(session, dict) or str(session.get("date") or "") < today:
+            continue
+        for key in ("duree_estimee_minutes", "effort_minutes"):
+            if isinstance(session.get(key), (int, float)):
+                session[key] = max(1, round(session[key] * factor))
+        if isinstance(session.get("distance_estimee_km"), (int, float)):
+            session["distance_estimee_km"] = round(session["distance_estimee_km"] * factor, 1)
+        if adjustment == "recovery":
+            session.update(
+                {
+                    "type": "récupération",
+                    "titre": "Récupération facile",
+                    "bloc_zone_fc": 2,
+                    "repetitions_bloc": 1,
+                    "objectif": "Récupérer avec une course facile, sans rechercher la vitesse ni augmenter la charge.",
+                    "consigne_intensite": "Rester en aisance respiratoire et arrêter en cas de douleur inhabituelle.",
+                }
+            )
+        session.pop("garmin", None)
+        changed += 1
+    if not changed:
+        raise ValueError("Aucune séance future à adapter.")
+    labels = {"lighter": "allégée de 20 %", "progressive": "augmentée prudemment de 10 %", "recovery": "convertie en récupération"}
+    payload["adaptation"] = f"Semaine {labels[adjustment]} après confirmation dans le chat."
+    target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"plan": payload, "changed_sessions": changed}
+
+
 def _calendar_items(client: Any, target_date: str) -> list[dict[str, Any]]:
     day = date.fromisoformat(target_date)
     calendar = client.connectapi(
@@ -366,6 +430,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             resolve_stale_coach_requests()
             _json_response(self, {"messages": list_messages()})
             return
+        if path == "/api/coach/status":
+            _json_response(self, coach_ai_status())
+            return
         if path.startswith("/reports/"):
             filename = Path(unquote(path.removeprefix("/reports/"))).name
             report = REPORTS_DIR / filename
@@ -391,6 +458,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
             except (ValueError, TypeError, json.JSONDecodeError) as exc:
                 _json_response(self, {"ok": False, "message": str(exc)}, status=400)
                 return
+            _json_response(
+                self,
+                {"ok": True, "objective": objective, "message": "Objectif enregistré."},
+            )
+            return
+        if path == "/api/coach/messages":
+            try:
+                content_length = int(self.headers.get("Content-Length", "0"))
+                body = json.loads(self.rfile.read(content_length) or b"{}")
+                message = submit_message(str(body.get("message") or ""))
+            except (ValueError, TypeError, json.JSONDecodeError) as exc:
+                _json_response(self, {"ok": False, "message": str(exc)}, status=400)
+                return
             try:
                 answer = store_response(
                     message["id"],
@@ -405,19 +485,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 return
             _json_response(
                 self,
-                {"ok": True, "objective": objective, "message": "Objectif enregistré."},
-            )
-            return
-        if path == "/api/coach/messages":
-            try:
-                content_length = int(self.headers.get("Content-Length", "0"))
-                body = json.loads(self.rfile.read(content_length) or b"{}")
-                message = submit_message(str(body.get("message") or ""))
-            except (ValueError, TypeError, json.JSONDecodeError) as exc:
-                _json_response(self, {"ok": False, "message": str(exc)}, status=400)
-                return
-            _json_response(
-                self,
                 {
                     "ok": True,
                     "message": "Réponse du coach reçue.",
@@ -426,6 +493,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 },
                 status=201,
             )
+            return
+        if path == "/api/coach/config":
+            try:
+                content_length = int(self.headers.get("Content-Length", "0"))
+                body = json.loads(self.rfile.read(content_length) or b"{}")
+                status = save_coach_ai_config(str(body.get("apiKey") or ""))
+            except (ValueError, TypeError, json.JSONDecodeError) as exc:
+                _json_response(self, {"ok": False, "message": str(exc)}, status=400)
+                return
+            _json_response(self, {"ok": True, **status})
             return
         if path == "/api/coach/action":
             try:
@@ -454,6 +531,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     )
                     result = {"session": session}
                     confirmation = "Séance déplacée dans Garmin Connect."
+                elif action == "adapt_plan":
+                    target = relevant_plan_path()
+                    if target is None:
+                        raise ValueError("Aucun plan actif.")
+                    result = adapt_plan(target, str(answer.get("plan_adjustment") or ""))
+                    confirmation = f"Plan adapté : {result['changed_sessions']} séance(s) mise(s) à jour."
                 else:
                     raise ValueError(
                         "Cette réponse ne contient aucune action applicable."

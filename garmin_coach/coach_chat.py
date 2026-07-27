@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import threading
+import unicodedata
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -28,8 +29,10 @@ class ObjectiveUpdate(BaseModel):
 
 class CoachResponse(BaseModel):
     message: str = Field(min_length=2, max_length=3000)
+    source: Literal["openai", "local"] = "local"
     plan_modifie: bool = False
-    action: Literal["none", "update_objective", "reschedule_session"] = "none"
+    action: Literal["none", "update_objective", "reschedule_session", "adapt_plan"] = "none"
+    plan_adjustment: Literal["lighter", "progressive", "recovery"] | None = None
     objective_update: ObjectiveUpdate | None = None
     session_index: int | None = Field(default=None, ge=0)
     new_date: str | None = None
@@ -42,6 +45,8 @@ class CoachResponse(BaseModel):
             self.session_index is None or self.new_date is None
         ):
             raise ValueError("La séance et sa nouvelle date sont requises.")
+        if self.action == "adapt_plan" and self.plan_adjustment is None:
+            raise ValueError("Le type d'adaptation du plan est requis.")
         return self
 
 
@@ -61,6 +66,9 @@ toujours confirmée dans l'application :
   de la distance, du nombre de séances ou de la date de course ;
 - reschedule_session uniquement si l'utilisateur donne l'index exact de la séance
   (la première vaut 0) et une date ISO YYYY-MM-DD ;
+- adapt_plan si l'utilisateur demande explicitement d'alléger, de renforcer
+  progressivement ou de transformer la semaine en récupération. Utilise
+  plan_adjustment=lighter, progressive ou recovery ;
 - none dans tous les autres cas, notamment si une précision est nécessaire.
 Ne prétends jamais qu'une action a déjà été appliquée. plan_modifie reste false.
 """.strip()
@@ -174,19 +182,77 @@ def generate_response(
             text_format=CoachResponse,
         )
         if response.output_parsed is not None:
-            return response.output_parsed
+            return response.output_parsed.model_copy(update={"source": "openai"})
     except Exception:
-        pass
-    return local_response(request["content"], context)
+        fallback = local_response(request["content"], context)
+        return fallback.model_copy(
+            update={
+                "message": "OpenAI est temporairement indisponible. Réponse locale : "
+                + fallback.message,
+                "source": "local",
+            }
+        )
+    fallback = local_response(request["content"], context)
+    return fallback.model_copy(
+        update={
+            "message": "OpenAI n'a pas renvoyé de réponse. Réponse locale : "
+            + fallback.message,
+            "source": "local",
+        }
+    )
 
 
 def local_response(content: str, context: dict[str, Any]) -> CoachResponse:
     """Réponse locale immédiate pour les usages courants et les pannes d'API."""
-    text = " ".join(content.lower().split())
-    if any(word in text for word in ("douleur", "bless", "genou", "cheville")):
+    text = " ".join(content.lower().replace("’", "'").split())
+    plain = "".join(
+        character
+        for character in unicodedata.normalize("NFKD", text)
+        if not unicodedata.combining(character)
+    )
+    objective = context.get("objectif") if isinstance(context, dict) else None
+    plan = context.get("plan_actif") if isinstance(context, dict) else None
+    activities = context.get("courses_recentes", []) if isinstance(context, dict) else []
+    conversation = context.get("conversation_recente", []) if isinstance(context, dict) else []
+    previous_assistant = next(
+        (
+            str(item.get("content") or "").lower()
+            for item in reversed(conversation)
+            if isinstance(item, dict) and item.get("role") == "assistant"
+        ),
+        "",
+    )
+    sessions_in_plan = plan.get("seances", []) if isinstance(plan, dict) else []
+    title = objective.get("title") if isinstance(objective, dict) else None
+
+    if "fatigue générale" in previous_assistant and any(
+        phrase in plain for phrase in ("sans douleur", "pas de douleur", "fatigue seulement")
+    ):
+        return CoachResponse(
+            message="Merci, je retiens une fatigue générale sans douleur. Je propose d'alléger les séances restantes de 20 % pour favoriser la récupération. Confirme ci-dessous pour modifier le plan.",
+            action="adapt_plan",
+            plan_adjustment="lighter",
+        )
+    if "jambes le lendemain" in previous_assistant and any(
+        phrase in plain for phrase in ("jambes bien", "bien recupere", "aucune fatigue")
+    ):
+        return CoachResponse(
+            message="Le bon ressenti se confirme le lendemain. Je propose une progression prudente de 10 % sur les séances restantes. Confirme uniquement si tu es toujours sans douleur.",
+            action="adapt_plan",
+            plan_adjustment="progressive",
+        )
+
+    if any(word in plain for word in ("poitrine", "malaise", "essoufflement inhabituel")):
+        return CoachResponse(message="Une douleur thoracique, un malaise ou un essoufflement inhabituel nécessite d'arrêter l'effort et de demander rapidement un avis médical adapté. Ne reprends pas la course sur la base d'un conseil du chatbot.")
+    if any(word in plain for word in ("douleur", "blesse", "blessure", "genou", "cheville")):
         return CoachResponse(message="Ne cours pas malgré une douleur. Où se situe-t-elle et apparaît-elle au repos ou seulement pendant l'effort ? Si elle est importante, persistante ou inhabituelle, demande un avis professionnel.")
 
-    sessions = re.search(r"\b([1-7])\s*s[ée]ances?", text)
+    if plain in {"bonjour", "salut", "hello", "bonsoir"}:
+        return CoachResponse(message=f"Bonjour ! Je peux analyser ton ressenti, expliquer tes métriques et proposer un changement d'objectif ou de calendrier.{f' Ton objectif actuel est « {title} ».' if title else ''} Comment te sens-tu après ta dernière séance ?")
+    if any(phrase in plain for phrase in ("que peux-tu", "tu peux faire", "comment ca marche", "aide-moi")):
+        return CoachResponse(message="Je peux comparer tes courses, recueillir ton ressenti, expliquer allure et cardio, adapter prudemment la charge, modifier un objectif et proposer le report d'une séance. Les changements restent à confirmer dans le chat.")
+
+    sessions = re.search(r"\b([1-7])\s*(?:seances?|entrainements?)", plain)
     if sessions:
         count = int(sessions.group(1))
         return CoachResponse(
@@ -195,8 +261,8 @@ def local_response(content: str, context: dict[str, Any]) -> CoachResponse:
             objective_update=ObjectiveUpdate(sessions_per_week=count),
         )
 
-    distance = re.search(r"\b(5|10|21[,.]1|42[,.]2)\s*km\b", text)
-    if distance and any(word in text for word in ("objectif", "prépar", "course")):
+    distance = re.search(r"\b(5|10|21[,.]1|42[,.]2)\s*km\b", plain)
+    if distance and any(word in plain for word in ("objectif", "prepar", "course")):
         km = float(distance.group(1).replace(",", "."))
         title = "Terminer un semi-marathon" if km == 21.1 else f"Préparer un {km:g} km"
         return CoachResponse(
@@ -205,21 +271,60 @@ def local_response(content: str, context: dict[str, Any]) -> CoachResponse:
             objective_update=ObjectiveUpdate(title=title, distance_km=km),
         )
 
-    iso_date = re.search(r"\b(20\d{2}-\d{2}-\d{2})\b", text)
-    session_number = re.search(r"s[ée]ance\s+(\d+)", text)
-    if iso_date and session_number and any(word in text for word in ("déplace", "report")):
+    if "semi-marathon" in plain and any(word in plain for word in ("objectif", "prepar", "change")):
+        return CoachResponse(message="Je te propose le semi-marathon comme nouvel objectif. Confirme ci-dessous pour l'appliquer.", action="update_objective", objective_update=ObjectiveUpdate(title="Terminer un semi-marathon", distance_km=21.1))
+
+    iso_date = re.search(r"\b(20\d{2}-\d{2}-\d{2})\b", plain)
+    session_number = re.search(r"seance\s+(\d+)", plain)
+    if iso_date and session_number and any(word in plain for word in ("deplace", "report")):
         return CoachResponse(
             message="Je peux déplacer cette séance. Confirme la proposition ci-dessous.",
             action="reschedule_session",
             session_index=max(0, int(session_number.group(1)) - 1),
             new_date=iso_date.group(1),
         )
+    if iso_date and any(word in plain for word in ("course", "objectif", "date")):
+        return CoachResponse(message=f"Je peux enregistrer le {iso_date.group(1)} comme date de course. Confirme la proposition ci-dessous.", action="update_objective", objective_update=ObjectiveUpdate(race_date=iso_date.group(1)))
+    if any(word in plain for word in ("deplace", "report", "je ne peux pas courir", "indisponible")):
+        upcoming = [item for item in sessions_in_plan if isinstance(item, dict)]
+        summary = ", ".join(f"{index + 1}: {item.get('titre', 'séance')} le {item.get('date', '—')}" for index, item in enumerate(upcoming))
+        return CoachResponse(message=("Indique le numéro de la séance et la nouvelle date au format AAAA-MM-JJ, par exemple « reporte la séance 2 au 2026-08-04 »." + (f" Séances actuelles : {summary}." if summary else "")))
 
-    if any(word in text for word in ("difficile", "dur", "épuis", "fatigu")):
+    if any(word in plain for word in ("difficile", "dur", "epuise", "fatigue", "jambes lourdes")):
         return CoachResponse(message="Je retiens que la séance était difficile. As-tu seulement une fatigue générale, ou aussi une douleur inhabituelle ? Je tiendrai compte de ta réponse avant de proposer une hausse de charge.")
+    if any(phrase in plain for phrase in ("je me sens bien", "etait facile", "effort facile", "bonne forme")):
+        return CoachResponse(message="Je retiens un effort facile et un bon ressenti. Je ne vais pas augmenter la charge sur ce seul signal : confirme aussi comment étaient les jambes le lendemain et si le cardio est resté maîtrisé.")
+    if any(phrase in plain for phrase in ("etait normale", "effort normal", "ressenti normal")):
+        return CoachResponse(message="Ressenti normal enregistré. C'est cohérent pour poursuivre le plan sans hausse brutale. Y avait-il une dérive du cardio ou une difficulté particulière en fin de séance ?")
+    if any(phrase in plain for phrase in ("dors mal", "mal dormi", "manque de sommeil")):
+        return CoachResponse(message="Le manque de sommeil est un signal de récupération à prendre au sérieux. Garde la prochaine séance facile ou reporte le travail intense. Depuis combien de nuits dors-tu mal, et ressens-tu une fatigue dans la journée ?")
+    if any(word in plain for word in ("vacances", "voyage", "deplacement professionnel")):
+        return CoachResponse(message="Je peux alléger ou déplacer la semaine concernée. Donne-moi les dates d'absence et précise si tu pourras courir facilement sur place.")
+    if any(phrase in plain for phrase in ("rate la seance", "rate une seance", "seance ratee", "pas fait la seance")):
+        return CoachResponse(message="Ce n'est pas nécessaire de rattraper en augmentant la charge. Souhaites-tu reporter cette séance, ou la marquer comme non faite et poursuivre le plan ?")
+    if any(phrase in plain for phrase in ("reduis la charge", "diminue la charge", "semaine plus legere")):
+        return CoachResponse(message="Je propose d'alléger les séances restantes d'environ 20 %, tout en conservant la continuité. Confirme ci-dessous pour modifier le plan.", action="adapt_plan", plan_adjustment="lighter")
+    if any(phrase in plain for phrase in ("semaine de recuperation", "mode recuperation", "recuperation cette semaine")):
+        return CoachResponse(message="Je propose de convertir les séances restantes en récupération facile, sans intensité haute. Confirme ci-dessous pour modifier le plan.", action="adapt_plan", plan_adjustment="recovery")
+    if any(phrase in plain for phrase in ("augmente la charge", "plus de charge", "20 %")):
+        return CoachResponse(message="Je propose une progression prudente d'environ 10 % sur les séances restantes. Confirme uniquement si tu es récupéré, sans douleur et régulier récemment.", action="adapt_plan", plan_adjustment="progressive")
+    if "22 min/km" in plain or "22 min /km" in plain:
+        return CoachResponse(message="Une pointe à 22 min/km peut correspondre à un arrêt, de la marche ou une mesure erronée. Le graphe la masque si elle est aberrante par rapport à la médiane, sans effacer la donnée Garmin. Était-ce une valeur isolée ou l'allure moyenne ?")
+    if "cardio" in plain or "frequence cardiaque" in plain:
+        return CoachResponse(message="Le cardio peut monter avec l'intensité, la chaleur, le relief ou une dérive progressive. Je comparerai surtout la courbe, les zones et l'altitude. La hausse était-elle progressive, brutale, ou limitée aux montées ?")
+    if any(phrase in plain for phrase in ("derniere course", "derniere seance", "ma course")) and activities:
+        latest = activities[-1] if isinstance(activities[-1], dict) else {}
+        distance_km = latest.get("distanceKm")
+        pace = latest.get("paceSeconds")
+        pace_text = f", allure moyenne {int(pace)//60}:{int(pace)%60:02d}/km" if isinstance(pace, (int, float)) else ""
+        return CoachResponse(message=f"Ta dernière course enregistrée fait {distance_km if distance_km is not None else '—'} km{pace_text}. Pour l'interpréter correctement, comment as-tu vécu l'effort et le terrain était-il plat ou vallonné ?")
+    if "demain" in plain and sessions_in_plan:
+        return CoachResponse(message="Je peux vérifier le plan, mais ton ressenti prime avant une séance proche. Te sens-tu récupéré, sans douleur et avec une fatigue normale ? Si oui, suis la séance prévue sans ajouter de charge.")
+    if any(word in plain for word in ("trouve-moi", "cherche", "internet", "region")):
+        return CoachResponse(message="La recherche web en direct n'est pas disponible dans le mode local. Donne-moi ta région et ta période souhaitée ; avec l'IA en ligne configurée, je pourrai t'aider à comparer une date avec ton niveau et ton plan.")
+    if plain in {"merci", "merci !", "ok", "d'accord", "super"}:
+        return CoachResponse(message="Avec plaisir. Je garde le fil de la discussion pour la prochaine adaptation. Dis-moi simplement comment se passe la prochaine séance.")
 
-    objective = context.get("objectif") if isinstance(context, dict) else None
-    title = objective.get("title") if isinstance(objective, dict) else None
     suffix = f" Ton objectif actuel est « {title} »." if title else ""
     return CoachResponse(message="J'ai bien reçu ta demande." + suffix + " Pour te répondre précisément, indique ton ressenti après la dernière séance : facile, normal ou difficile, et signale toute douleur.")
 
@@ -258,6 +363,7 @@ def store_response(request_id: str, response: CoachResponse) -> dict[str, Any]:
             "status": "complete",
             "reply_to": request_id,
             "plan_modifie": response.plan_modifie,
+            "source": response.source,
             "action": response.action,
             "objective_update": (
                 response.objective_update.model_dump(exclude_none=True)
@@ -266,6 +372,7 @@ def store_response(request_id: str, response: CoachResponse) -> dict[str, Any]:
             ),
             "session_index": response.session_index,
             "new_date": response.new_date,
+            "plan_adjustment": response.plan_adjustment,
         }
         messages.append(answer)
         _save_unlocked(messages)

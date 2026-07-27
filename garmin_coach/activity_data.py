@@ -154,9 +154,9 @@ def public_detail(activity_id: str | int, max_points: int = 500) -> dict[str, An
     return {
         "activity_id": str(activity_id),
         "metric_fields": payload.get("metric_fields", []),
-        "samples": samples[::step][:max_points],
-        "laps": payload.get("laps", []),
+        "samples": _without_location(samples[::step][:max_points]),
+        "laps": _without_location(payload.get("laps", [])),
         "heart_rate_zones": payload.get("heart_rate_zones", []),
-        "weather": payload.get("weather", {}),
+        "weather": _without_location(payload.get("weather", {})),
         "privacy": payload.get("privacy"),
     }

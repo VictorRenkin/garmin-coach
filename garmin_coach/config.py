@@ -27,7 +27,7 @@ class Settings:
     password: str | None
     poll_seconds: int
     openai_api_key: str | None = None
-    openai_model: str = "gpt-5.6-luna"
+    openai_model: str = "gpt-5.6-sol"
 
 
 def load_settings() -> Settings:
@@ -43,7 +43,7 @@ def load_settings() -> Settings:
         password=os.getenv("GARMIN_PASSWORD") or None,
         poll_seconds=poll_seconds,
         openai_api_key=os.getenv("OPENAI_API_KEY") or None,
-        openai_model=os.getenv("OPENAI_MODEL") or "gpt-5.6-luna",
+        openai_model=os.getenv("OPENAI_MODEL") or "gpt-5.6-sol",
     )
 
 
