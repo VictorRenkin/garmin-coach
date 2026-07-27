@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 import uuid
 from datetime import datetime
@@ -158,24 +159,69 @@ def generate_response(
 ) -> CoachResponse:
     """Produit la réponse affichée par le tableau de bord via l'API configurée."""
     if not settings.openai_api_key:
-        raise ValueError(
-            "Le coach IA n'est pas configuré. Lance configurer-ia.cmd puis réessaie."
+        return local_response(request["content"], context)
+    try:
+        client = OpenAI(api_key=settings.openai_api_key, timeout=12.0, max_retries=0)
+        response = client.responses.parse(
+            model=settings.openai_model,
+            reasoning={"effort": "none"},
+            instructions=COACH_CHAT_INSTRUCTIONS,
+            input=json.dumps(
+                {"demande": request["content"], "contexte": context},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
+            text_format=CoachResponse,
         )
-    client = OpenAI(api_key=settings.openai_api_key)
-    response = client.responses.parse(
-        model=settings.openai_model,
-        reasoning={"effort": "low"},
-        instructions=COACH_CHAT_INSTRUCTIONS,
-        input=json.dumps(
-            {"demande": request["content"], "contexte": context},
-            ensure_ascii=False,
-            separators=(",", ":"),
-        ),
-        text_format=CoachResponse,
-    )
-    if response.output_parsed is None:
-        raise RuntimeError("Le coach IA n'a pas produit de réponse.")
-    return response.output_parsed
+        if response.output_parsed is not None:
+            return response.output_parsed
+    except Exception:
+        pass
+    return local_response(request["content"], context)
+
+
+def local_response(content: str, context: dict[str, Any]) -> CoachResponse:
+    """Réponse locale immédiate pour les usages courants et les pannes d'API."""
+    text = " ".join(content.lower().split())
+    if any(word in text for word in ("douleur", "bless", "genou", "cheville")):
+        return CoachResponse(message="Ne cours pas malgré une douleur. Où se situe-t-elle et apparaît-elle au repos ou seulement pendant l'effort ? Si elle est importante, persistante ou inhabituelle, demande un avis professionnel.")
+
+    sessions = re.search(r"\b([1-7])\s*s[ée]ances?", text)
+    if sessions:
+        count = int(sessions.group(1))
+        return CoachResponse(
+            message=f"Je peux passer l'objectif à {count} séances par semaine. Confirme la proposition ci-dessous pour l'appliquer.",
+            action="update_objective",
+            objective_update=ObjectiveUpdate(sessions_per_week=count),
+        )
+
+    distance = re.search(r"\b(5|10|21[,.]1|42[,.]2)\s*km\b", text)
+    if distance and any(word in text for word in ("objectif", "prépar", "course")):
+        km = float(distance.group(1).replace(",", "."))
+        title = "Terminer un semi-marathon" if km == 21.1 else f"Préparer un {km:g} km"
+        return CoachResponse(
+            message=f"Je te propose de définir {km:g} km comme nouvel objectif. La charge évoluera progressivement après confirmation.",
+            action="update_objective",
+            objective_update=ObjectiveUpdate(title=title, distance_km=km),
+        )
+
+    iso_date = re.search(r"\b(20\d{2}-\d{2}-\d{2})\b", text)
+    session_number = re.search(r"s[ée]ance\s+(\d+)", text)
+    if iso_date and session_number and any(word in text for word in ("déplace", "report")):
+        return CoachResponse(
+            message="Je peux déplacer cette séance. Confirme la proposition ci-dessous.",
+            action="reschedule_session",
+            session_index=max(0, int(session_number.group(1)) - 1),
+            new_date=iso_date.group(1),
+        )
+
+    if any(word in text for word in ("difficile", "dur", "épuis", "fatigu")):
+        return CoachResponse(message="Je retiens que la séance était difficile. As-tu seulement une fatigue générale, ou aussi une douleur inhabituelle ? Je tiendrai compte de ta réponse avant de proposer une hausse de charge.")
+
+    objective = context.get("objectif") if isinstance(context, dict) else None
+    title = objective.get("title") if isinstance(objective, dict) else None
+    suffix = f" Ton objectif actuel est « {title} »." if title else ""
+    return CoachResponse(message="J'ai bien reçu ta demande." + suffix + " Pour te répondre précisément, indique ton ressenti après la dernière séance : facile, normal ou difficile, et signale toute douleur.")
 
 
 def store_response(request_id: str, response: CoachResponse) -> dict[str, Any]:

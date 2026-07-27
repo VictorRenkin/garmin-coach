@@ -17,7 +17,9 @@ from .coach_chat import (
     generate_response,
     get_message,
     list_messages,
+    local_response,
     mark_action_applied,
+    pending_requests,
     store_response,
     submit_message,
 )
@@ -176,6 +178,19 @@ def coach_context() -> dict[str, Any]:
         ],
         "conversation_recente": conversation,
     }
+
+
+def resolve_stale_coach_requests() -> int:
+    """Termine immédiatement les anciens messages restés sans réponse."""
+    pending = pending_requests()
+    if not pending:
+        return 0
+    context = coach_context()
+    for request in pending:
+        store_response(
+            str(request["id"]), local_response(str(request.get("content") or ""), context)
+        )
+    return len(pending)
 
 def load_relevant_plan() -> dict[str, Any] | None:
     current_week = monday_of(date.today())
@@ -348,6 +363,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             )
             return
         if path == "/api/coach/messages":
+            resolve_stale_coach_requests()
             _json_response(self, {"messages": list_messages()})
             return
         if path.startswith("/reports/"):

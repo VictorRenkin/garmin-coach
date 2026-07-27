@@ -73,6 +73,27 @@ def test_generate_response_sends_context_and_uses_structured_output(monkeypatch)
     assert captured["text_format"] is coach_chat.CoachResponse
 
 
+def test_chat_replies_immediately_without_api_key() -> None:
+    response = coach_chat.generate_response(
+        {"content": "La séance était difficile"},
+        Settings(None, None, 300, None, "gpt-5.6-luna"),
+        {"objectif": {"title": "Terminer un semi-marathon"}},
+    )
+
+    assert "difficile" in response.message
+    assert "fatigue" in response.message
+
+
+def test_local_coach_can_propose_an_objective_change() -> None:
+    response = coach_chat.local_response(
+        "Je veux préparer un 10 km", {"objectif": {"distanceKm": 21.1}}
+    )
+
+    assert response.action == "update_objective"
+    assert response.objective_update is not None
+    assert response.objective_update.distance_km == 10
+
+
 @pytest.mark.parametrize(
     ("question", "response"),
     [

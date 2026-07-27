@@ -20,7 +20,7 @@ def main() -> int:
 
     env_file = ROOT_DIR / ".env"
     set_key(str(env_file), "OPENAI_API_KEY", api_key, quote_mode="always")
-    set_key(str(env_file), "OPENAI_MODEL", "gpt-5.6-sol", quote_mode="always")
+    set_key(str(env_file), "OPENAI_MODEL", "gpt-5.6-luna", quote_mode="always")
     print("IA CONFIGURÉE : OUI")
     print("Tu peux maintenant lancer : connexion-garmin.cmd puis l'analyse.")
     return 0

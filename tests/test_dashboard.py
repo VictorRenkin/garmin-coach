@@ -278,3 +278,6 @@ def test_dashboard_chat_supports_confirmable_actions_and_waiting_state() -> None
     assert "Confirmer le déplacement" in html
     assert "Le coach réfléchit…" in html
     assert 'id="chatSend"' in html
+    assert "event.key==='Enter'&&!event.shiftKey" in html
+    assert "requestSubmit()" in html
+    assert "AbortController" in html
