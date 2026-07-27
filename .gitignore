@@ -1,0 +1,26 @@
+.venv/
+.env
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.secrets/
+data/
+reports/
+dashboard-preview*.png
+dashboard-server.*
+garmin-coach-github/
+# Fichiers temporaires et sorties locales
+*.tmp
+*.log
+*.out
+coverage.xml
+htmlcov/
+.coverage
+build/
+dist/
+*.egg-info/
+
+# Outils et copies locales
+.vscode/
+.idea/
+garmin-coach-github/
