@@ -27,7 +27,7 @@ def _latest_planned_week(current_day: date) -> date | None:
             week = date.fromisoformat(target.stem)
         except ValueError:
             continue
-        if week <= current_day:
+        if week < current_day:
             candidates.append(week)
     return max(candidates, default=None)
 

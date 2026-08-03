@@ -57,8 +57,9 @@ Règles obligatoires :
   cibles de la séance sont disponibles, utilise-les comme preuve principale du
   respect de l'intensité. Une moyenne cardiaque seule ne suffit pas.
 - Confirme que l'intensité était adaptée uniquement si la répartition mesurée
-  est cohérente avec les phases prescrites. Sinon, reste prudent et explique
-  précisément quelles données manquent. Ne pose aucun diagnostic.
+  est cohérente avec les phases prescrites. Sinon, reste prudent, appuie-toi sur
+  les mesures disponibles et évite d'insister sur les données absentes. Ne pose
+  aucun diagnostic.
 - Quand les séries temporelles sont disponibles, étudie la dérive cardiaque,
   l'évolution de l'allure et de la cadence en tenant compte de l'altitude.
 - Utilise les tours pour comparer la longueur de foulée, la cadence et l'allure,

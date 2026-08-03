@@ -159,6 +159,20 @@ def test_past_incomplete_session_is_marked_skipped() -> None:
     ) == ["terminee", "a_venir", "a_venir"]
 
 
+def test_manually_completed_session_counts_as_finished() -> None:
+    sessions = [
+        {"date": "2026-07-21", "statut": "terminee", "distance_realisee_km": 7},
+        {"date": "2026-07-23", "statut": "terminee", "distance_realisee_km": 5},
+        {"date": "2026-07-25", "statut": "terminee", "distance_realisee_km": 5},
+    ]
+
+    assert training_cycle.session_statuses(sessions, [], date(2026, 7, 26)) == [
+        "terminee",
+        "terminee",
+        "terminee",
+    ]
+
+
 def test_finished_cycle_with_skipped_session_triggers_next_plan(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(training_cycle, "PLANS_DIR", tmp_path)
     monkeypatch.setattr(

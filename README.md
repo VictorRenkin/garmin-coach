@@ -109,8 +109,7 @@ Ensuite, utilise simplement **Actualiser et analyser** dans l’interface. Pour 
 
 - Les identifiants, jetons Garmin, activités, analyses et rapports sont exclus du dépôt.
 - Le serveur écoute uniquement sur `127.0.0.1` par défaut : le tableau de bord n’est pas exposé au réseau local.
-- Les données GPS et les informations d’identité sont retirées du contexte sportif envoyé pour l’analyse IA.
-- Avec ton accord, le chat transmet à OpenAI les messages, l’objectif, le programme et les métriques Garmin anonymisées nécessaires à une réponse contextualisée.
+- Le coach IA reçoit uniquement le contexte sportif nécessaire pour fournir une réponse personnalisée.
 - Une proposition du coach ne modifie l’objectif ou Garmin qu’après confirmation dans le chat.
 - Rien ne remplace l’avis d’un professionnel de santé : les recommandations sont sportives, pas médicales.
 

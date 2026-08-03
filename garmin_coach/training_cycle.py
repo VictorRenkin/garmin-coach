@@ -246,6 +246,8 @@ def session_statuses(
     for index, session in enumerate(planned_sessions):
         if index in completed:
             statuses.append("terminee")
+        elif session.get("statut") == "terminee":
+            statuses.append("terminee")
         elif session.get("statut") == "skippee":
             statuses.append("skippee")
         else:
@@ -270,7 +272,9 @@ def _context_for_week(week_start: date) -> dict[str, Any]:
     ]
     current_plan = load_plan(week_start)
     planned_sessions = current_plan.get("seances", []) if current_plan else []
-    completed_count = _completed_session_count(planned_sessions, all_activities)
+    completed_count = session_statuses(planned_sessions, all_activities).count(
+        "terminee"
+    )
     adherence = f"{completed_count}/3" if len(planned_sessions) == 3 else "non mesurable"
     recent = [
         activity

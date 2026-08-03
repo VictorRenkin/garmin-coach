@@ -42,7 +42,7 @@ def test_weekly_context_skips_when_next_plan_exists(tmp_path, monkeypatch) -> No
     (tmp_path / "2026-07-20.json").write_text("{}", encoding="utf-8")
     (tmp_path / "2026-07-27.json").write_text("{}", encoding="utf-8")
 
-    result = codex_weekly.weekly_context(date(2026, 7, 27))
+    result = codex_weekly.weekly_context(date(2026, 7, 26))
 
     assert result["due"] is False
 

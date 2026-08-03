@@ -108,12 +108,13 @@
       box.innerHTML='<strong>Analyse en attente.</strong><p>Utilise « Actualiser et analyser ».</p>';
       return;
     }
-    const respect=ai.respect_objectif==='oui'?'Séance respectée':ai.respect_objectif==='non'?'Séance non respectée':'Séance indéterminable';
-    const zones=ai.respect_zones_cardiaques==='oui'?'Zones FC respectées':ai.respect_zones_cardiaques==='non'?'Zones FC non respectées':'Zones FC indéterminables';
+    const respect=ai.respect_objectif==='oui'?'Séance respectée':ai.respect_objectif==='non'?'Séance non respectée':'';
+    const zones=ai.respect_zones_cardiaques==='oui'?'Zones FC respectées':ai.respect_zones_cardiaques==='non'?'Zones FC non respectées':'';
     const successes=(ai.points_reussis||[]).map(item=>'<span class="analysis-point">✓ '+esc(item)+'</span>').join('');
     const progress=(ai.axes_progression||[]).map(item=>'<span class="analysis-point">→ '+esc(item)+'</span>').join('');
     const limit=ai.limites_analyse?.[0]?'<small class="analysis-limit">Limite : '+esc(ai.limites_analyse[0])+'</small>':'';
-    box.innerHTML='<strong>'+esc(ai.titre||ai.verdict)+'</strong><p>'+esc(ai.synthese)+'</p><div class="analysis-meta">'+esc(respect)+' · '+esc(zones)+'</div><div class="analysis-points">'+successes+progress+'</div>'+limit;
+    const indicators=[respect,zones].filter(Boolean);
+    box.innerHTML='<strong>'+esc(ai.titre||ai.verdict)+'</strong><p>'+esc(ai.synthese)+'</p>'+(indicators.length?'<div class="analysis-meta">'+indicators.map(esc).join(' · ')+'</div>':'')+'<div class="analysis-points">'+successes+progress+'</div>'+limit;
   }
   function renderZones(){const zones=state.detail?.heart_rate_zones||[],total=zones.reduce((s,z)=>s+(z.secsInZone||0),0);$('zoneList').innerHTML=zones.length?zones.map((z,i)=>{const next=zones[i+1]?.zoneLowBoundary,max=next?next-1:'+';const pct=total?Math.round((z.secsInZone||0)/total*100):0;return `<div class="zone"><b>Z${z.zoneNumber}</b><small>${z.zoneLowBoundary??'—'}–${max} bpm</small><span>${fmtDuration(z.secsInZone||0)} · ${pct}%</span></div>`}).join(''):'<div class="empty">Zones indisponibles pour cette course.</div>';}
   function renderLaps(){const laps=state.detail?.laps||[];$('lapRows').innerHTML=laps.length?laps.map((l,i)=>`<tr><td>${i+1}</td><td>${l.distance?`${(l.distance/1000).toFixed(2)} km`:'—'}</td><td>${fmtPace(paceFromLap(l))}</td><td>${l.elevationGain!=null?`${Math.round(l.elevationGain)} m`:'—'}</td><td>${l.averageHR!=null?`${Math.round(l.averageHR)} / ${Math.round(l.maxHR||0)}`:'—'}</td><td>${l.averageRunCadence!=null?`${Math.round(l.averageRunCadence)} ppm`:'—'}</td><td>${l.strideLength!=null?`${Math.round(l.strideLength)} cm`:'—'}</td></tr>`).join(''):'<tr><td colspan="7" class="empty">Tours indisponibles.</td></tr>';}
@@ -151,10 +152,8 @@
     const filtered=filterChartPoints(candidatePoints,mode),points=filtered.points;
     const quality=$(canvasId+'Quality');
     if(quality){
-      quality.classList.toggle('warn',filtered.rejected>0);
-      quality.textContent=filtered.rejected
-        ? `${filtered.rejected} valeur(s) aberrante(s) masquée(s) · médiane ${mode.label(filtered.center)} · seuils ${mode.label(filtered.low)} à ${mode.label(filtered.high)}`
-        : `Données cohérentes · médiane ${mode.label(filtered.center)}`;
+      quality.classList.remove('warn');
+      quality.textContent='';
     }
     if(points.length<2){
       ctx.fillStyle='#8fa6b5';

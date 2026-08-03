@@ -274,7 +274,7 @@ def test_dashboard_filters_implausible_chart_values() -> None:
     assert "min:120,max:1200" in html
     assert "maxRatio:2.5" in html
     assert 'id="paceChartQuality"' in html
-    assert "valeur(s) aberrante(s) masquée(s)" in html
+    assert "valeur(s) aberrante(s) masquée(s)" not in html
 
 
 def test_dashboard_chat_supports_confirmable_actions_and_waiting_state() -> None:
