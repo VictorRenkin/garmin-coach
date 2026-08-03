@@ -74,33 +74,27 @@ def test_generate_response_sends_context_and_uses_structured_output(monkeypatch)
     assert captured["text_format"] is coach_chat.CoachResponse
 
 
-def test_chat_replies_immediately_without_api_key() -> None:
-    response = coach_chat.generate_response(
-        {"content": "La séance était difficile"},
-        Settings(None, None, 300, None, "gpt-5.6-sol"),
-        {"objectif": {"title": "Terminer un semi-marathon"}},
-    )
-
-    assert "difficile" in response.message
-    assert "fatigue" in response.message
-    assert response.source == "local"
+def test_chat_requires_ai_connection_instead_of_automatic_reply() -> None:
+    with pytest.raises(RuntimeError, match="réponses automatiques est désactivé"):
+        coach_chat.generate_response(
+            {"content": "La séance était difficile"},
+            Settings(None, None, 300, None, "gpt-5.6-sol"),
+            {"objectif": {"title": "Terminer un semi-marathon"}},
+        )
 
 
-def test_chat_falls_back_locally_when_openai_is_unavailable(monkeypatch) -> None:
+def test_chat_reports_ai_failure_instead_of_automatic_reply(monkeypatch) -> None:
     class FailingClient:
         def __init__(self, **kwargs):
             raise TimeoutError("API indisponible")
 
     monkeypatch.setattr(coach_chat, "OpenAI", FailingClient)
-    response = coach_chat.generate_response(
-        {"content": "Bonjour"},
-        Settings(None, None, 300, "test-key", "gpt-5.6-sol"),
-        {"objectif": {"title": "Préparer un 10 km"}},
-    )
-
-    assert "Bonjour" in response.message
-    assert "OpenAI est temporairement indisponible" in response.message
-    assert response.source == "local"
+    with pytest.raises(RuntimeError, match="temporairement indisponible"):
+        coach_chat.generate_response(
+            {"content": "Bonjour"},
+            Settings(None, None, 300, "test-key", "gpt-5.6-sol"),
+            {"objectif": {"title": "Préparer un 10 km"}},
+        )
 
 
 def test_local_coach_can_propose_an_objective_change() -> None:

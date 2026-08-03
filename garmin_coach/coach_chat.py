@@ -162,12 +162,32 @@ def pending_requests() -> list[dict[str, Any]]:
     ]
 
 
+def mark_request_failed(request_id: str) -> None:
+    """Marque une demande comme échouée sans inventer une réponse de coach."""
+    with _LOCK:
+        messages = _load_unlocked()
+        request = next(
+            (
+                item
+                for item in messages
+                if item.get("id") == request_id and item.get("role") == "user"
+            ),
+            None,
+        )
+        if request is not None:
+            request["status"] = "failed"
+            _save_unlocked(messages)
+
+
 def generate_response(
     request: dict[str, Any], settings: Settings, context: dict[str, Any]
 ) -> CoachResponse:
     """Produit la réponse affichée par le tableau de bord via l'API configurée."""
     if not settings.openai_api_key:
-        return local_response(request["content"], context)
+        raise RuntimeError(
+            "Connecte ChatGPT avant d'envoyer un message : le mode de réponses "
+            "automatiques est désactivé."
+        )
     try:
         client = OpenAI(api_key=settings.openai_api_key, timeout=12.0, max_retries=0)
         response = client.responses.parse(
@@ -183,23 +203,11 @@ def generate_response(
         )
         if response.output_parsed is not None:
             return response.output_parsed.model_copy(update={"source": "openai"})
-    except Exception:
-        fallback = local_response(request["content"], context)
-        return fallback.model_copy(
-            update={
-                "message": "OpenAI est temporairement indisponible. Réponse locale : "
-                + fallback.message,
-                "source": "local",
-            }
-        )
-    fallback = local_response(request["content"], context)
-    return fallback.model_copy(
-        update={
-            "message": "OpenAI n'a pas renvoyé de réponse. Réponse locale : "
-            + fallback.message,
-            "source": "local",
-        }
-    )
+    except Exception as exc:
+        raise RuntimeError(
+            "L'assistant IA est temporairement indisponible. Réessaie dans un instant."
+        ) from exc
+    raise RuntimeError("L'assistant IA n'a pas renvoyé de réponse. Réessaie.")
 
 
 def local_response(content: str, context: dict[str, Any]) -> CoachResponse:

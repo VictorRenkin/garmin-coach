@@ -1,5 +1,6 @@
 import json
 import threading
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -282,7 +283,7 @@ def test_dashboard_chat_supports_confirmable_actions_and_waiting_state() -> None
     assert "/api/coach/action" in html
     assert "Confirmer le nouvel objectif" in html
     assert "Confirmer le déplacement" in html
-    assert "Le coach réfléchit…" in html
+    assert "L’assistant réfléchit…" in html
     assert 'id="chatSend"' in html
     assert "event.key==='Enter'&&!event.shiftKey" in html
     assert "requestSubmit()" in html
@@ -292,11 +293,11 @@ def test_dashboard_chat_supports_confirmable_actions_and_waiting_state() -> None
     assert 'id="coachConfigDialog"' in html
     assert "/api/coach/status" in html
     assert "/api/coach/config" in html
-    assert "Mode local · réponses limitées" in html
+    assert "Connecte l’assistant pour commencer une vraie conversation" in html
     assert "width:min(100%,900px);margin-inline:auto" in html
 
 
-def test_chat_http_endpoint_returns_answer_end_to_end(tmp_path, monkeypatch) -> None:
+def test_chat_http_endpoint_requires_ai_instead_of_automatic_answer(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(coach_chat, "MESSAGES_FILE", tmp_path / "messages.json")
     monkeypatch.setattr(coach_chat, "COACH_DRAFTS_DIR", tmp_path / "drafts")
     monkeypatch.setattr(coach_chat, "ensure_directories", lambda: None)
@@ -318,12 +319,12 @@ def test_chat_http_endpoint_returns_answer_end_to_end(tmp_path, monkeypatch) -> 
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(request, timeout=3) as response:
-            payload = json.loads(response.read())
-        assert response.status == 201
-        assert payload["answer"]["role"] == "assistant"
-        assert payload["answer"]["source"] == "local"
-        assert "Bonjour" in payload["answer"]["content"]
+        with pytest.raises(urllib.error.HTTPError) as error:
+            urllib.request.urlopen(request, timeout=3)
+        assert error.value.code == 503
+        payload = json.loads(error.value.read())
+        assert "réponses automatiques est désactivé" in payload["message"]
+        assert coach_chat.list_messages()[0]["status"] == "failed"
         assert coach_chat.pending_requests() == []
     finally:
         server.shutdown()

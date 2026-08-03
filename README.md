@@ -37,7 +37,7 @@ L’application fonctionne sur ton ordinateur et s’ouvre dans le navigateur. L
 Prérequis : **Python 3.11 ou plus récent**, un compte Garmin Connect et Windows 10/11.
 
 ```powershell
-git clone <URL-DU-DEPOT>
+git clone https://github.com/VictorRenkin/garmin-coach.git
 cd "Garmin coach"
 python -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements.txt
@@ -59,9 +59,17 @@ L’adresse, le mot de passe et l’éventuel code de vérification sont demand�
 
 Le navigateur s’ouvre sur [http://127.0.0.1:8765](http://127.0.0.1:8765). Clique sur **Actualiser et analyser** pour importer tes courses.
 
-À ce stade, le suivi et les statistiques fonctionnent déjà. L’analyse et la génération de plans demandent en plus une clé API OpenAI.
+À ce stade, le suivi, les statistiques et les actions Garmin fonctionnent déjà sans OpenAI.
 
-## Activer le coach IA
+## Choisir comment utiliser le coach IA
+
+### Option gratuite : travailler avec Codex
+
+Ouvre le dossier du projet dans Codex et discute avec l’assistant depuis la tâche Codex. Cette utilisation ne demande aucune clé API supplémentaire. Le tableau de bord reste consacré aux données, aux graphiques et aux actions Garmin.
+
+### Option intégrée au tableau de bord : API OpenAI
+
+Le chat directement intégré au tableau de bord utilise l’API OpenAI. Cette API est facultative, payante à l’usage et facturée séparément d’un abonnement ChatGPT ou Codex. Sans clé API, le champ de conversation reste désactivé et aucune réponse automatique prédéfinie n’est générée.
 
 Crée une clé depuis [OpenAI Platform](https://platform.openai.com/api-keys), puis lance :
 
@@ -69,7 +77,7 @@ Crée une clé depuis [OpenAI Platform](https://platform.openai.com/api-keys), p
 .\configurer-ia.cmd
 ```
 
-La clé est stockée dans le fichier local `.env`, ignoré par Git. Tu peux aussi partir de `.env.example` pour régler manuellement le modèle ou les options disponibles.
+La clé est stockée dans le fichier local `.env`, ignoré par Git. Ne publie jamais ce fichier et n’enregistre jamais tes identifiants ou ton mot de passe ChatGPT dans l’application. Tu peux aussi partir de `.env.example` pour régler manuellement le modèle ou les options disponibles.
 
 Ensuite, utilise simplement **Actualiser et analyser** dans l’interface. Pour les usages avancés :
 
