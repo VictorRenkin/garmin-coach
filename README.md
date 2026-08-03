@@ -38,7 +38,7 @@ Prérequis : **Python 3.11 ou plus récent**, un compte Garmin Connect et Window
 
 ```powershell
 git clone https://github.com/VictorRenkin/garmin-coach.git
-cd "Garmin coach"
+cd garmin-coach
 python -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
@@ -61,15 +61,19 @@ Le navigateur s’ouvre sur [http://127.0.0.1:8765](http://127.0.0.1:8765). Cliq
 
 À ce stade, le suivi, les statistiques et les actions Garmin fonctionnent déjà sans OpenAI.
 
-## Choisir comment utiliser le coach IA
+## Ce qui fonctionne selon ta configuration
 
-### Option gratuite : travailler avec Codex
+| Fonction | Sans API OpenAI | Avec API OpenAI |
+| --- | :---: | :---: |
+| Importer et consulter les courses Garmin | ✓ | ✓ |
+| Afficher les graphiques, zones et tours | ✓ | ✓ |
+| Gérer l’objectif et reporter une séance | ✓ | ✓ |
+| Discuter avec le coach dans le tableau de bord | — | ✓ |
+| Demander une adaptation en langage naturel | — | ✓ |
 
-Ouvre le dossier du projet dans Codex et discute avec l’assistant depuis la tâche Codex. Cette utilisation ne demande aucune clé API supplémentaire. Le tableau de bord reste consacré aux données, aux graphiques et aux actions Garmin.
+Sans API, tu peux également ouvrir le projet dans Codex et discuter avec l’assistant depuis l’application Codex. Pour utiliser le coach directement dans le tableau de bord, il faut une clé API OpenAI. L’API est facultative, payante à l’usage et facturée séparément d’un abonnement ChatGPT ou Codex.
 
-### Option intégrée au tableau de bord : API OpenAI
-
-Le chat directement intégré au tableau de bord utilise l’API OpenAI. Cette API est facultative, payante à l’usage et facturée séparément d’un abonnement ChatGPT ou Codex. Sans clé API, le champ de conversation reste désactivé et aucune réponse automatique prédéfinie n’est générée.
+### Activer le coach dans le tableau de bord
 
 Crée une clé depuis [OpenAI Platform](https://platform.openai.com/api-keys), puis lance :
 
@@ -77,20 +81,7 @@ Crée une clé depuis [OpenAI Platform](https://platform.openai.com/api-keys), p
 .\configurer-ia.cmd
 ```
 
-La clé est stockée dans le fichier local `.env`, ignoré par Git. Ne publie jamais ce fichier et n’enregistre jamais tes identifiants ou ton mot de passe ChatGPT dans l’application. Tu peux aussi partir de `.env.example` pour régler manuellement le modèle ou les options disponibles.
-
-Ensuite, utilise simplement **Actualiser et analyser** dans l’interface. Pour les usages avancés :
-
-```powershell
-# Analyser la dernière course en attente
-.\.venv\Scripts\python.exe -m garmin_coach.cli analyze
-
-# Analyser toutes les courses en attente
-.\.venv\Scripts\python.exe -m garmin_coach.cli analyze --all
-
-# Évaluer la semaine et publier les trois séances suivantes
-.\.venv\Scripts\python.exe -m garmin_coach.cli weekly
-```
+La clé est stockée dans le fichier local `.env`, ignoré par Git. Ne publie jamais ce fichier et n’enregistre jamais tes identifiants ou ton mot de passe ChatGPT dans l’application. Ensuite, utilise simplement **Actualiser et analyser** dans l’interface.
 
 ## Ce que tu retrouves dans le tableau de bord
 
@@ -124,22 +115,6 @@ Ensuite, utilise simplement **Actualiser et analyser** dans l’interface. Pour 
 
 # Lancer le tableau de bord sans ouvrir automatiquement le navigateur
 .\.venv\Scripts\python.exe -m garmin_coach.dashboard --no-browser
-```
-
-## Développement
-
-```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
-.\.venv\Scripts\python.exe -m pytest -q
-```
-
-Le projet est volontairement léger : un backend Python, une interface HTML/CSS/JavaScript sans compilation et une suite de tests couvrant la synchronisation, la confidentialité des données, le dashboard, les analyses et la publication des entraînements.
-
-```text
-garmin_coach/   Application, API locale, interface et logique d’entraînement
-tests/          Tests unitaires et contrôles visuels du dashboard
-data/           Données Garmin locales — jamais versionnées
-reports/        Bilans générés — jamais versionnés
 ```
 
 ## Limites actuelles
