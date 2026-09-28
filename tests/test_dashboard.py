@@ -320,6 +320,16 @@ def test_dashboard_chat_supports_confirmable_actions_and_waiting_state() -> None
     assert "width:min(100%,900px);margin-inline:auto" in html
 
 
+def test_login_keeps_registration_only_fields_hidden_and_has_no_eye_control() -> None:
+    html = dashboard.LANDING_FILE.read_text(encoding="utf-8")
+
+    assert "[hidden]{display:none!important}" in html
+    assert 'id="confirmField" hidden' in html
+    assert 'id="termsRow" hidden' in html
+    assert "passwordToggle" not in html
+    assert "eye-icon" not in html
+
+
 def test_chat_http_endpoint_queues_ai_response(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(coach_chat, "MESSAGES_FILE", tmp_path / "messages.json")
     monkeypatch.setattr(coach_chat, "COACH_DRAFTS_DIR", tmp_path / "drafts")
