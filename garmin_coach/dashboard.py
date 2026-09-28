@@ -11,7 +11,7 @@ from datetime import date, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from dotenv import set_key
 from garminconnect import (
@@ -21,6 +21,7 @@ from garminconnect import (
     GarthException,
 )
 
+from .account_security import public_auth_config, send_account_email, verify_human
 from .ai_analysis import analyze_and_save, load_analysis
 from .activity_data import latest_hr_zone_boundaries, public_detail
 from .athlete_memory import activity_trace, load_memory
@@ -48,10 +49,14 @@ from .garmin_workouts import publish_plan, remove_future_sessions, replace_futur
 from .manager import MANAGER_EMAIL, manager_authorized, manager_cookie, manager_login, manager_stats
 from .user_accounts import (
     authenticate_account,
+    confirm_email,
     create_session,
     ensure_user_record,
+    issue_email_verification,
+    issue_password_reset,
     register_account,
     record_login,
+    reset_password,
     session_cookie,
     user_from_cookie,
     user_id_for_email,
@@ -83,6 +88,9 @@ from .training_cycle import (
 
 TEMPLATE_FILE = Path(__file__).with_name("dashboard_v2.html")
 LANDING_FILE = Path(__file__).with_name("landing.html")
+TERMS_FILE = Path(__file__).with_name("terms.html")
+PRIVACY_FILE = Path(__file__).with_name("privacy.html")
+RESET_PASSWORD_FILE = Path(__file__).with_name("reset_password.html")
 ASSETS_DIR = Path(__file__).with_name("assets")
 MANAGER_FILE = Path(__file__).with_name("manager.html")
 LOGGER = logging.getLogger(__name__)
@@ -717,7 +725,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
-        public = path in {"/", "/api/mobile/health"} or path.startswith("/assets/")
+        public = path in {
+            "/",
+            "/terms",
+            "/privacy",
+            "/verify-email",
+            "/reset-password",
+            "/api/public/auth-config",
+            "/api/mobile/health",
+        } or path.startswith("/assets/")
         manager = path == "/manager" or path.startswith("/api/manager/")
         if public or manager:
             self._do_GET()
@@ -740,6 +756,31 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(body)
+            return
+        if path in {"/terms", "/privacy", "/reset-password"}:
+            source = {
+                "/terms": TERMS_FILE,
+                "/privacy": PRIVACY_FILE,
+                "/reset-password": RESET_PASSWORD_FILE,
+            }[path]
+            body = source.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if path == "/verify-email":
+            token = parse_qs(urlparse(self.path).query).get("token", [""])[0]
+            self.send_response(302)
+            self.send_header(
+                "Location", "/?verified=1" if confirm_email(token) else "/?verification=invalid"
+            )
+            self.end_headers()
+            return
+        if path == "/api/public/auth-config":
+            _json_response(self, public_auth_config())
             return
         if path == "/dashboard":
             body = TEMPLATE_FILE.read_bytes()
@@ -849,6 +890,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if path in {
             "/api/account/login",
             "/api/account/register",
+            "/api/account/resend-verification",
+            "/api/account/forgot-password",
+            "/api/account/reset-password",
             "/api/login",
             "/api/logout",
             "/api/manager/logout",
@@ -892,7 +936,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 },
             )
             return
-        if path in {"/api/account/login", "/api/account/register"}:
+        if path in {
+            "/api/account/login",
+            "/api/account/register",
+            "/api/account/resend-verification",
+            "/api/account/forgot-password",
+            "/api/account/reset-password",
+        }:
             try:
                 content_length = int(self.headers.get("Content-Length", "0"))
                 if content_length < 0 or content_length > 16_384:
@@ -902,31 +952,82 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     raise ValueError("Requête de connexion invalide.")
                 email = str(body.get("email") or "").strip()
                 password = str(body.get("password") or "")
-                if not email or not password:
+                if path != "/api/account/reset-password" and not email:
+                    raise ValueError("L’adresse e-mail est requise.")
+                if path in {"/api/account/login", "/api/account/register"} and not password:
                     raise ValueError("L’adresse e-mail et le mot de passe sont requis.")
                 if path == "/api/account/register":
-                    account = register_account(email, password)
-                    message = "Ton compte Motionest est créé."
-                    created = True
-                else:
-                    account = authenticate_account(email, password)
-                    if account is None:
-                        _json_response(
-                            self,
-                            {"ok": False, "message": "Adresse e-mail ou mot de passe incorrect."},
-                            status=401,
-                        )
+                    if password != str(body.get("passwordConfirm") or ""):
+                        raise ValueError("Les deux mots de passe ne correspondent pas.")
+                    if not verify_human(
+                        str(body.get("turnstileToken") or ""),
+                        self.client_address[0],
+                        str(body.get("company") or ""),
+                    ):
+                        _json_response(self, {"ok": False, "message": "La vérification anti-robot a échoué."}, 400)
                         return
-                    message = "Connexion réussie."
-                    created = False
+                    account = register_account(
+                        email,
+                        password,
+                        terms_accepted=body.get("termsAccepted") is True,
+                    )
+                    verification_url = send_account_email(
+                        str(account["email"]), "verify", str(account["verificationToken"])
+                    )
+                    response = {
+                        "ok": True,
+                        "verificationPending": True,
+                        "message": "Compte créé. Consulte ta messagerie pour confirmer ton adresse.",
+                    }
+                    if os.getenv("MOTIONEST_ENV", "development").lower() != "production":
+                        response["developmentVerificationUrl"] = verification_url
+                    _json_response(self, response, status=201)
+                    return
+                if path == "/api/account/resend-verification":
+                    pending = issue_email_verification(email)
+                    if pending:
+                        send_account_email(pending[0], "verify", pending[1])
+                    _json_response(self, {"ok": True, "message": "Si ce compte attend une confirmation, un nouveau lien a été envoyé."})
+                    return
+                if path == "/api/account/forgot-password":
+                    reset = issue_password_reset(email)
+                    development_url = send_account_email(reset[0], "reset", reset[1]) if reset else ""
+                    response = {"ok": True, "message": "Si un compte confirmé correspond à cette adresse, un lien a été envoyé."}
+                    if development_url and os.getenv("MOTIONEST_ENV", "development").lower() != "production":
+                        response["developmentResetUrl"] = development_url
+                    _json_response(self, response)
+                    return
+                if path == "/api/account/reset-password":
+                    if password != str(body.get("passwordConfirm") or ""):
+                        raise ValueError("Les deux mots de passe ne correspondent pas.")
+                    if not reset_password(str(body.get("token") or ""), password):
+                        _json_response(self, {"ok": False, "message": "Ce lien est invalide ou a expiré."}, 400)
+                        return
+                    _json_response(self, {"ok": True, "message": "Ton mot de passe a été modifié.", "redirect": "/?passwordReset=1"})
+                    return
+
+                account = authenticate_account(email, password)
+                if account is None:
+                    _json_response(
+                        self,
+                        {"ok": False, "message": "Adresse e-mail ou mot de passe incorrect."},
+                        status=401,
+                    )
+                    return
+                if not account.get("emailVerified"):
+                    pending = issue_email_verification(email)
+                    if pending:
+                        send_account_email(pending[0], "verify", pending[1])
+                    _json_response(
+                        self,
+                        {"ok": False, "verificationPending": True, "message": "Confirme d’abord ton adresse e-mail."},
+                        status=403,
+                    )
+                    return
+                remember = body.get("remember") is True
                 user_id = str(account["id"])
-                record_login(
-                    str(account["email"]),
-                    user_id,
-                    imported=0,
-                    onboarding_complete=False,
-                )
-                user_session = create_session(user_id)
+                record_login(str(account["email"]), user_id, imported=0, onboarding_complete=False)
+                user_session = create_session(user_id, remember=remember)
             except (ValueError, TypeError, json.JSONDecodeError) as exc:
                 _json_response(self, {"ok": False, "message": str(exc)}, status=400)
                 return
@@ -935,14 +1036,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 {
                     "ok": True,
                     "role": "athlete",
-                    "created": created,
+                    "created": False,
                     "redirect": "/dashboard",
-                    "message": message,
+                    "message": "Connexion réussie.",
                     "user": {
                         "email": account["email"],
                     },
                 },
-                headers={"Set-Cookie": session_cookie(user_session)},
+                headers={"Set-Cookie": session_cookie(user_session, remember=remember)},
             )
             return
         if path == "/api/login":

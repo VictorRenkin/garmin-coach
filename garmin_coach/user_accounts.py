@@ -10,6 +10,7 @@ import base64
 import hashlib
 import hmac
 import json
+import os
 import secrets
 import threading
 import time
@@ -29,6 +30,9 @@ PASSWORD_MAX_LENGTH = 1024
 PASSWORD_SCRYPT_N = 2**14
 PASSWORD_SCRYPT_R = 8
 PASSWORD_SCRYPT_P = 1
+EMAIL_TOKEN_TTL_SECONDS = 24 * 60 * 60
+RESET_TOKEN_TTL_SECONDS = 60 * 60
+TERMS_VERSION = "2026-09-28"
 _LOCK = threading.RLock()
 _WORKSPACE_LOCKS: dict[str, threading.Lock] = {}
 _USER_ID_CHARS = frozenset(
@@ -77,15 +81,24 @@ def _password_digest(password: str, salt: bytes) -> bytes:
     )
 
 
-def register_account(email: str, password: str) -> dict[str, Any]:
+def _token_digest(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def register_account(
+    email: str, password: str, *, terms_accepted: bool = False
+) -> dict[str, Any]:
     """Crée un compte Motionest autonome et retourne son identité publique."""
     normalized = _normalize_email(email)
     _validate_password(password)
+    if not terms_accepted:
+        raise ValueError("Tu dois accepter les conditions d’utilisation.")
     with _LOCK:
         users = _load_users()
         if any(str(item.get("email", "")).lower() == normalized for item in users):
             raise ValueError("Un compte Motionest existe déjà avec cette adresse.")
         salt = secrets.token_bytes(16)
+        verification_token = secrets.token_urlsafe(32)
         user = {
             "email": normalized,
             "id": "u_" + secrets.token_urlsafe(18).replace("-", "_"),
@@ -95,10 +108,19 @@ def register_account(email: str, password: str) -> dict[str, Any]:
             "connections": 0,
             "activities_imported": 0,
             "onboarding_complete": False,
+            "email_verified": False,
+            "email_verification_hash": _token_digest(verification_token),
+            "email_verification_expires": int(time.time()) + EMAIL_TOKEN_TTL_SECONDS,
+            "terms_version": TERMS_VERSION,
+            "terms_accepted_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         }
         users.append(user)
         _save_users(users)
-        return {"id": user["id"], "email": normalized}
+        return {
+            "id": user["id"],
+            "email": normalized,
+            "verificationToken": verification_token,
+        }
 
 
 def authenticate_account(email: str, password: str) -> dict[str, Any] | None:
@@ -137,7 +159,102 @@ def authenticate_account(email: str, password: str) -> dict[str, Any] | None:
     return {
         "id": user_id,
         "email": str(user.get("email") or ""),
+        "emailVerified": bool(user.get("email_verified")),
     }
+
+
+def issue_email_verification(email: str) -> tuple[str, str] | None:
+    """Renouvelle le lien de confirmation d'un compte non confirmé."""
+    normalized = _normalize_email(email)
+    with _LOCK:
+        users = _load_users()
+        user = next(
+            (item for item in users if str(item.get("email", "")).lower() == normalized),
+            None,
+        )
+        if user is None or bool(user.get("email_verified")):
+            return None
+        token = secrets.token_urlsafe(32)
+        user["email_verification_hash"] = _token_digest(token)
+        user["email_verification_expires"] = int(time.time()) + EMAIL_TOKEN_TTL_SECONDS
+        _save_users(users)
+        return normalized, token
+
+
+def confirm_email(token: str) -> bool:
+    if not token or len(token) > 512:
+        return False
+    digest = _token_digest(token)
+    now = int(time.time())
+    with _LOCK:
+        users = _load_users()
+        user = next(
+            (
+                item
+                for item in users
+                if hmac.compare_digest(
+                    str(item.get("email_verification_hash") or ""), digest
+                )
+            ),
+            None,
+        )
+        if user is None or int(user.get("email_verification_expires") or 0) < now:
+            return False
+        user["email_verified"] = True
+        user["email_verified_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+        user.pop("email_verification_hash", None)
+        user.pop("email_verification_expires", None)
+        _save_users(users)
+        return True
+
+
+def issue_password_reset(email: str) -> tuple[str, str] | None:
+    """Crée un lien de récupération sans révéler l'existence du compte à l'API."""
+    try:
+        normalized = _normalize_email(email)
+    except ValueError:
+        return None
+    with _LOCK:
+        users = _load_users()
+        user = next(
+            (item for item in users if str(item.get("email", "")).lower() == normalized),
+            None,
+        )
+        if user is None or not bool(user.get("email_verified")):
+            return None
+        token = secrets.token_urlsafe(32)
+        user["password_reset_hash"] = _token_digest(token)
+        user["password_reset_expires"] = int(time.time()) + RESET_TOKEN_TTL_SECONDS
+        _save_users(users)
+        return normalized, token
+
+
+def reset_password(token: str, password: str) -> bool:
+    _validate_password(password)
+    if not token or len(token) > 512:
+        return False
+    digest = _token_digest(token)
+    now = int(time.time())
+    with _LOCK:
+        users = _load_users()
+        user = next(
+            (
+                item
+                for item in users
+                if hmac.compare_digest(str(item.get("password_reset_hash") or ""), digest)
+            ),
+            None,
+        )
+        if user is None or int(user.get("password_reset_expires") or 0) < now:
+            return False
+        salt = secrets.token_bytes(16)
+        user["password_salt"] = _urlsafe_encode(salt)
+        user["password_hash"] = _urlsafe_encode(_password_digest(password, salt))
+        user["password_changed_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+        user.pop("password_reset_hash", None)
+        user.pop("password_reset_expires", None)
+        _save_users(users)
+        return True
 
 
 def _load_users() -> list[dict[str, Any]]:
@@ -293,11 +410,11 @@ def _session_key() -> bytes:
         return key
 
 
-def create_session(user_id: str) -> str:
+def create_session(user_id: str, *, remember: bool = False) -> str:
     """Crée une session signée qui reste valide après un redémarrage."""
     if not _valid_user_id(user_id):
         raise ValueError("Identifiant utilisateur invalide.")
-    expires = int(time.time()) + SESSION_TTL_SECONDS
+    expires = int(time.time()) + (30 * 24 * 60 * 60 if remember else SESSION_TTL_SECONDS)
     payload = f"{user_id}:{expires}:{secrets.token_urlsafe(16)}".encode("ascii")
     encoded = _urlsafe_encode(payload)
     signature = hmac.new(_session_key(), encoded.encode("ascii"), hashlib.sha256).digest()
@@ -335,11 +452,18 @@ def user_from_cookie(cookie: str) -> str | None:
     return user_id
 
 
-def session_cookie(token: str) -> str:
-    return (
-        f"motionest_session={token}; HttpOnly; SameSite=Strict; "
-        f"Path=/; Max-Age={SESSION_TTL_SECONDS}"
-    )
+def session_cookie(token: str, *, remember: bool = False) -> str:
+    attributes = [
+        f"motionest_session={token}",
+        "HttpOnly",
+        "SameSite=Strict",
+        "Path=/",
+    ]
+    if remember:
+        attributes.append(f"Max-Age={30 * 24 * 60 * 60}")
+    if os.getenv("MOTIONEST_ENV", "development").strip().lower() == "production":
+        attributes.append("Secure")
+    return "; ".join(attributes)
 
 
 def public_user_identifier(email: str) -> str:

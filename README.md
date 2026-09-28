@@ -96,6 +96,20 @@ La clé, le modèle et l’URL sont stockés dans le fichier local `.env`, ignor
 | Historique | Toutes les courses importées, avec accès à l’activité Garmin |
 | Conversation | Questions de ressenti, conseils et adaptations à confirmer dans le même fil |
 
+## Comptes Motionest
+
+La création d'un compte Motionest est distincte de Garmin et Strava. Elle exige
+un mot de passe confirmé, l'acceptation des conditions, une vérification
+anti-robot et la confirmation de l'adresse e-mail. Les mots de passe sont
+dérivés avec `scrypt` et un sel propre à chaque compte.
+
+En développement, les e-mails de confirmation et de récupération sont déposés
+dans `data/outbox/` et le lien est affiché par l'interface locale. Pour la
+production, configure `MOTIONEST_ENV=production`, `MOTIONEST_PUBLIC_URL`, les
+variables `SMTP_*` ainsi que `TURNSTILE_SITE_KEY` et `TURNSTILE_SECRET_KEY`.
+Turnstile n'est demandé qu'à la création du compte. Sans clés valides en
+production, l'inscription échoue de manière sécurisée.
+
 ## Tes données restent sous ton contrôle
 
 - Les identifiants, jetons Garmin, activités, analyses et rapports sont exclus du dépôt.

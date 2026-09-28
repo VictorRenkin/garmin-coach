@@ -58,6 +58,12 @@
     .eye-icon{width:18px;height:12px;border:2px solid currentColor;border-radius:70% 15%;position:relative;transform:rotate(45deg)}
     .eye-icon:after{content:"";position:absolute;inset:2px;border-radius:50%;background:currentColor}
     .hold-hint{display:block;margin-top:5px;color:#83928b;font-size:9px}
+    .auth-options{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:14px;font-size:11px;color:var(--muted)}
+    .check{display:flex;align-items:flex-start;gap:8px;line-height:1.4}.check input{margin-top:2px;accent-color:var(--lime)}
+    .text-button{border:0;padding:0;background:none;color:var(--lime);font:inherit;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
+    .terms-row{margin-top:15px;font-size:10px;color:var(--muted)}.terms-row a{color:var(--lime)}
+    .honeypot{position:absolute!important;left:-10000px!important;width:1px!important;height:1px!important;overflow:hidden!important}
+    .turnstile-box{margin-top:15px;min-height:0}.turnstile-box[hidden]{display:none}
     .submit{width:100%;border:0;border-radius:12px;background:var(--lime);color:#111a0b;font-weight:860;padding:15px;margin-top:20px;cursor:pointer;transition:.18s}
     .submit:hover{filter:brightness(1.05);transform:translateY(-1px)}
     .submit:focus-visible{outline:3px solid rgba(201,244,87,.32);outline-offset:2px}
@@ -95,7 +101,12 @@
         <h2 id="authTitle">Retrouve ton entraînement.</h2>
         <p class="login-intro" id="authIntro">Connecte-toi à ton compte Motionest. Tes applications sportives seront reliées séparément.</p>
         <div class="field"><label for="email">Adresse e-mail</label><input id="email" name="email" type="email" autocomplete="username" inputmode="email" placeholder="toi@exemple.com" required></div>
-        <div class="field"><label for="password">Mot de passe Motionest</label><div class="field-control"><input id="password" name="password" type="password" autocomplete="current-password" minlength="10" maxlength="1024" placeholder="10 caractères minimum" required><button class="password-toggle" id="passwordToggle" type="button" aria-label="Maintenir pour afficher le mot de passe" aria-pressed="false"><span class="eye-icon" aria-hidden="true"></span></button></div><small class="hold-hint">Maintiens l’œil pour afficher</small></div>
+        <div class="field" id="passwordField"><label for="password">Mot de passe Motionest</label><div class="field-control"><input id="password" name="password" type="password" autocomplete="current-password" minlength="10" maxlength="1024" placeholder="10 caractères minimum" required><button class="password-toggle" id="passwordToggle" type="button" aria-label="Maintenir pour afficher le mot de passe" aria-pressed="false"><span class="eye-icon" aria-hidden="true"></span></button></div><small class="hold-hint">Maintiens l’œil pour afficher</small></div>
+        <div class="field" id="confirmField" hidden><label for="passwordConfirm">Confirme le mot de passe</label><input id="passwordConfirm" name="passwordConfirm" type="password" autocomplete="new-password" minlength="10" maxlength="1024" placeholder="Retape exactement le mot de passe"></div>
+        <div class="auth-options" id="loginOptions"><label class="check"><input id="remember" name="remember" type="checkbox">Rester connecté</label><button class="text-button" id="forgotPassword" type="button">Mot de passe oublié ?</button></div>
+        <label class="check terms-row" id="termsRow" hidden><input id="termsAccepted" name="termsAccepted" type="checkbox">J’accepte les <a href="/terms" target="_blank">Conditions d’utilisation</a> et la <a href="/privacy" target="_blank">Politique de confidentialité</a>.</label>
+        <label class="honeypot" aria-hidden="true">Entreprise<input id="company" name="company" type="text" tabindex="-1" autocomplete="off"></label>
+        <div class="turnstile-box" id="turnstileBox" hidden></div>
         <button class="submit" type="submit">Se connecter →</button>
         <p class="form-status" id="formStatus" role="status" aria-live="polite"></p>
       </form>
@@ -103,8 +114,8 @@
   </main>
   <script>
     const form=document.getElementById('connect'),status=document.getElementById('formStatus');
-    const password=document.getElementById('password'),passwordToggle=document.getElementById('passwordToggle'),loginTab=document.getElementById('loginTab'),registerTab=document.getElementById('registerTab'),authTitle=document.getElementById('authTitle'),authIntro=document.getElementById('authIntro');
-    let authMode='login';
+    const password=document.getElementById('password'),passwordConfirm=document.getElementById('passwordConfirm'),passwordToggle=document.getElementById('passwordToggle'),loginTab=document.getElementById('loginTab'),registerTab=document.getElementById('registerTab'),authTitle=document.getElementById('authTitle'),authIntro=document.getElementById('authIntro'),confirmField=document.getElementById('confirmField'),loginOptions=document.getElementById('loginOptions'),termsRow=document.getElementById('termsRow'),termsAccepted=document.getElementById('termsAccepted'),turnstileBox=document.getElementById('turnstileBox');
+    let authMode='login',turnstileToken='development-pass',turnstileRequired=false,turnstileRendered=false;
     const showPassword=()=>{password.type='text';passwordToggle.setAttribute('aria-pressed','true')};
     const hidePassword=()=>{password.type='password';passwordToggle.setAttribute('aria-pressed','false')};
     passwordToggle.addEventListener('pointerdown',event=>{event.preventDefault();showPassword();passwordToggle.setPointerCapture?.(event.pointerId)});
@@ -116,8 +127,11 @@
     passwordToggle.addEventListener('keydown',event=>{if(event.key===' '||event.key==='Enter'){event.preventDefault();showPassword()}});
     passwordToggle.addEventListener('keyup',event=>{if(event.key===' '||event.key==='Enter')hidePassword()});
     const setStatus=(message,state='')=>{status.textContent=message;status.dataset.state=state};
-    function setAuthMode(mode){authMode=mode;const registering=mode==='register';loginTab.classList.toggle('active',!registering);registerTab.classList.toggle('active',registering);loginTab.setAttribute('aria-selected',String(!registering));registerTab.setAttribute('aria-selected',String(registering));password.autocomplete=registering?'new-password':'current-password';authTitle.textContent=registering?'Commence ton accompagnement.':'Retrouve ton entraînement.';authIntro.textContent=registering?'Crée ton compte Motionest. Tu pourras ensuite définir ton objectif et connecter tes applications sportives.':'Connecte-toi à ton compte Motionest. Tes applications sportives seront reliées séparément.';form.querySelector('.submit').textContent=registering?'Créer mon compte →':'Se connecter →';setStatus('')}
+    function renderTurnstile(){if(!turnstileRequired||turnstileRendered||!window.turnstile)return;window.turnstile.render(turnstileBox,{sitekey:turnstileBox.dataset.sitekey,theme:'dark',callback:token=>{turnstileToken=token},'expired-callback':()=>{turnstileToken=''}});turnstileRendered=true}
+    async function configureBotProtection(){try{const response=await fetch('/api/public/auth-config'),config=await response.json();turnstileRequired=Boolean(config.turnstileRequired);if(turnstileRequired){turnstileToken='';turnstileBox.dataset.sitekey=config.turnstileSiteKey||'';const script=document.createElement('script');script.src='https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';script.async=true;script.defer=true;script.onload=renderTurnstile;document.head.appendChild(script)}}catch(error){turnstileRequired=true;turnstileToken=''}}
+    function setAuthMode(mode){authMode=mode;const registering=mode==='register';loginTab.classList.toggle('active',!registering);registerTab.classList.toggle('active',registering);loginTab.setAttribute('aria-selected',String(!registering));registerTab.setAttribute('aria-selected',String(registering));confirmField.hidden=!registering;passwordConfirm.required=registering;loginOptions.hidden=registering;termsRow.hidden=!registering;termsAccepted.required=registering;turnstileBox.hidden=!registering||!turnstileRequired;if(registering)renderTurnstile();password.autocomplete=registering?'new-password':'current-password';authTitle.textContent=registering?'Commence ton accompagnement.':'Retrouve ton entraînement.';authIntro.textContent=registering?'Crée ton compte Motionest. Tu pourras ensuite définir ton objectif et connecter tes applications sportives.':'Connecte-toi à ton compte Motionest. Tes applications sportives seront reliées séparément.';form.querySelector('.submit').textContent=registering?'Créer mon compte →':'Se connecter →';setStatus('')}
     loginTab.addEventListener('click',()=>setAuthMode('login'));registerTab.addEventListener('click',()=>setAuthMode('register'));
+    document.getElementById('forgotPassword').addEventListener('click',async()=>{const email=document.getElementById('email');if(!email.value||!email.checkValidity()){setStatus('Saisis d’abord ton adresse e-mail.','error');email.focus();return}setStatus('Envoi du lien…');try{const response=await fetch('/api/account/forgot-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email.value})}),data=await response.json();setStatus(data.message||'Si ce compte existe, un lien a été envoyé.');if(data.developmentResetUrl)setStatus(`${data.message} Mode local : ouvre ${data.developmentResetUrl}`)}catch(error){setStatus('Envoi momentanément impossible.','error')}});
     form.addEventListener('submit',async event=>{
       event.preventDefault();
       if(!form.reportValidity())return;
@@ -125,10 +139,11 @@
       const button=form.querySelector('.submit'),values=new FormData(form);
       button.disabled=true;button.textContent=authMode==='register'?'Création en cours…':'Connexion en cours…';setStatus('Vérification du compte…');
       try{
-        const response=await fetch(`/api/account/${authMode}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:values.get('email'),password:values.get('password')})});
+        if(authMode==='register'&&turnstileRequired&&!turnstileToken){setStatus('Termine la vérification anti-robot.','error');return}
+        const response=await fetch(`/api/account/${authMode}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:values.get('email'),password:values.get('password'),passwordConfirm:values.get('passwordConfirm'),remember:values.get('remember')==='on',termsAccepted:values.get('termsAccepted')==='on',turnstileToken,company:values.get('company')})});
         const raw=await response.text();let data={};try{data=JSON.parse(raw)}catch(parseError){}
         if(!response.ok){setStatus(data.message||`Connexion impossible (${response.status}).`,'error');return}
-        setStatus(data.message||'Connexion réussie.');window.location.assign(data.redirect||'/dashboard');
+        if(data.verificationPending){setStatus(data.developmentVerificationUrl?`${data.message} Mode local : ouvre ${data.developmentVerificationUrl}`:data.message);return}setStatus(data.message||'Connexion réussie.');window.location.assign(data.redirect||'/dashboard');
       }catch(error){setStatus('Connexion impossible. Vérifie que Motionest est bien ouvert puis réessaie.','error')}
       finally{button.disabled=false;button.textContent=authMode==='register'?'Créer mon compte →':'Se connecter →'}
     });
@@ -139,6 +154,8 @@
     ],insight=document.getElementById('coachInsight'),signals=[...document.querySelectorAll('.signal')];
     function showInsight(index){insight.classList.add('changing');signals.forEach((button,i)=>button.classList.toggle('active',i===index));setTimeout(()=>{insight.textContent=insights[index];insight.classList.remove('changing')},200)}
     signals.forEach((button,index)=>button.addEventListener('click',()=>showInsight(index)));
+    configureBotProtection();
+    const params=new URLSearchParams(location.search);if(params.get('verified')==='1')setStatus('Adresse confirmée. Tu peux maintenant te connecter.');if(params.get('verification')==='invalid')setStatus('Ce lien de confirmation est invalide ou a expiré.','error');if(params.get('passwordReset')==='1')setStatus('Mot de passe modifié. Tu peux te connecter.');
   </script>
 </body>
 </html>

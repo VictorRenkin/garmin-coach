@@ -11,13 +11,14 @@ import pytest
 
 from garminconnect import GarminConnectAuthenticationError, GarminConnectConnectionError
 
-from garmin_coach import config, dashboard, manager, user_accounts
+from garmin_coach import account_security, config, dashboard, manager, user_accounts
 
 
 @pytest.fixture(autouse=True)
 def isolated_web_secrets(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(user_accounts, "SESSION_KEY_FILE", tmp_path / "web_session.key")
     monkeypatch.setattr(manager, "ACCOUNT_FILE", tmp_path / "manager_account.json")
+    monkeypatch.setattr(account_security, "OUTBOX_DIR", tmp_path / "outbox")
 
 
 @pytest.fixture
@@ -202,15 +203,34 @@ def test_motionest_account_registration_and_login_are_independent_from_garmin(
             {
                 "email": "alice@example.com",
                 "password": "correct-horse-battery-staple",
+                "passwordConfirm": "correct-horse-battery-staple",
+                "termsAccepted": True,
+                "turnstileToken": "development-pass",
+                "company": "",
             },
         )
-        assert status == 200
-        assert payload["created"] is True
-        assert payload["user"] == {"email": "alice@example.com"}
-        assert set_cookie.startswith("motionest_session=")
+        assert status == 201
+        assert payload["verificationPending"] is True
+        assert not set_cookie
+        assert "token=" in payload["developmentVerificationUrl"]
         stored = json.loads(user_accounts.USERS_FILE.read_text(encoding="utf-8"))[0]
         assert stored["password_hash"] != "correct-horse-battery-staple"
         assert "correct-horse-battery-staple" not in json.dumps(stored)
+
+        status, payload, _ = _post(
+            f"http://127.0.0.1:{server.server_port}/api/account/login",
+            {
+                "email": "alice@example.com",
+                "password": "correct-horse-battery-staple",
+            },
+        )
+        assert status == 403
+        assert payload["verificationPending"] is True
+
+        refreshed = user_accounts.issue_email_verification("alice@example.com")
+        assert refreshed is not None
+        verification_token = refreshed[1]
+        assert user_accounts.confirm_email(verification_token)
 
         status, payload, _ = _post(
             f"http://127.0.0.1:{server.server_port}/api/account/login",
@@ -238,12 +258,75 @@ def test_motionest_account_registration_and_login_are_independent_from_garmin(
 def test_motionest_registration_rejects_duplicate_and_short_password(
     isolated_workspaces: Path,
 ) -> None:
-    user_accounts.register_account("runner@example.com", "long-enough-password")
+    user_accounts.register_account(
+        "runner@example.com", "long-enough-password", terms_accepted=True
+    )
 
     with pytest.raises(ValueError, match="existe déjà"):
-        user_accounts.register_account("RUNNER@example.com", "another-long-password")
+        user_accounts.register_account(
+            "RUNNER@example.com", "another-long-password", terms_accepted=True
+        )
     with pytest.raises(ValueError, match="au moins"):
-        user_accounts.register_account("new@example.com", "short")
+        user_accounts.register_account("new@example.com", "short", terms_accepted=True)
+
+
+def test_registration_requires_matching_passwords_terms_and_human_check(
+    isolated_workspaces: Path,
+) -> None:
+    server, thread = _serve()
+    url = f"http://127.0.0.1:{server.server_port}/api/account/register"
+    base = {
+        "email": "runner@example.com",
+        "password": "long-enough-password",
+        "passwordConfirm": "long-enough-password",
+        "termsAccepted": True,
+        "turnstileToken": "development-pass",
+        "company": "",
+    }
+    try:
+        status, payload, _ = _post(url, {**base, "passwordConfirm": "different-password"})
+        assert status == 400
+        assert "correspondent" in payload["message"]
+
+        status, payload, _ = _post(url, {**base, "termsAccepted": False})
+        assert status == 400
+        assert "conditions" in payload["message"]
+
+        status, payload, _ = _post(url, {**base, "turnstileToken": "invalid"})
+        assert status == 400
+        assert "anti-robot" in payload["message"]
+
+        status, payload, _ = _post(url, {**base, "company": "bot-filled-field"})
+        assert status == 400
+        assert "anti-robot" in payload["message"]
+        assert not user_accounts.USERS_FILE.exists()
+    finally:
+        server.shutdown()
+        thread.join(timeout=3)
+        server.server_close()
+
+
+def test_email_confirmation_and_password_reset_tokens_are_single_use(
+    isolated_workspaces: Path,
+) -> None:
+    account = user_accounts.register_account(
+        "runner@example.com", "initial-long-password", terms_accepted=True
+    )
+    verification = str(account["verificationToken"])
+    assert user_accounts.confirm_email(verification)
+    assert not user_accounts.confirm_email(verification)
+
+    issued = user_accounts.issue_password_reset("runner@example.com")
+    assert issued is not None
+    _, reset_token = issued
+    assert user_accounts.reset_password(reset_token, "replacement-password")
+    assert not user_accounts.reset_password(reset_token, "another-replacement")
+    assert user_accounts.authenticate_account(
+        "runner@example.com", "replacement-password"
+    )
+    assert user_accounts.authenticate_account(
+        "runner@example.com", "initial-long-password"
+    ) is None
 
 
 def test_two_full_logins_create_isolated_accounts_and_manager_aggregates_them(

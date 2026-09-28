@@ -107,8 +107,11 @@ ORDRE DE RÉALISATION
 [BASE FAITE] 1. Compte Motionest : inscription, connexion et déconnexion.
              La validation d'e-mail, la récupération et le durcissement restent
              volontairement dans les étapes suivantes.
-[À FAIRE]  2. Validation d'e-mail et récupération de mot de passe.
-[À FAIRE]  3. Durcissement des sessions et protection contre les abus.
+[BASE FAITE] 2. Validation d'e-mail et récupération de mot de passe.
+              Le fournisseur SMTP devra être configuré avant publication.
+[EN COURS] 3. Durcissement des sessions et protection contre les abus.
+             Turnstile est intégré ; les clés de production et la limitation de
+             débit distribuée seront configurées avec l'hébergement.
 [À FAIRE]  4. Onboarding conversationnel et profil sportif.
 [À FAIRE]  5. Garmin comme intégration séparée du login.
 [À FAIRE]  6. Strava et import manuel comme intégrations supplémentaires.
