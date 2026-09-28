@@ -41,7 +41,9 @@
     .signal{border:1px solid rgba(255,255,255,.14);border-radius:99px;background:rgba(255,255,255,.045);color:#dce5e0;padding:6px 9px;font-size:9px;cursor:pointer;transition:.18s}
     .signal:hover,.signal:focus-visible,.signal.active{border-color:var(--lime);color:var(--lime);background:rgba(201,244,87,.08);outline:none}
     .login{align-self:center;background:rgba(5,16,13,.84);border:1px solid rgba(255,255,255,.21);border-radius:24px;padding:28px;backdrop-filter:blur(20px);box-shadow:0 30px 80px rgba(0,0,0,.38)}
-    .garmin-badge{display:inline-flex;font-size:9px;font-weight:880;letter-spacing:.1em;padding:7px 9px;border-radius:7px;color:#071410;background:#8dd9e8;white-space:nowrap}
+    .account-badge{display:inline-flex;font-size:9px;font-weight:880;letter-spacing:.1em;padding:7px 9px;border-radius:7px;color:#111a0b;background:var(--lime);white-space:nowrap}
+    .auth-tabs{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin:17px 0 5px;padding:4px;border-radius:12px;background:rgba(255,255,255,.06)}
+    .auth-tab{border:0;border-radius:9px;padding:9px;background:transparent;color:var(--muted);font-size:11px;font-weight:800;cursor:pointer}.auth-tab.active{background:rgba(201,244,87,.14);color:var(--lime)}
     .login h2{font-size:27px;letter-spacing:-.045em;margin:17px 0 5px}
     .login-intro{font-size:13px;color:var(--muted);line-height:1.5;margin:0 0 21px}
     .field{display:grid;gap:7px;margin-top:15px}
@@ -88,20 +90,22 @@
         </div>
       </div>
       <form class="login" id="connect" novalidate>
-        <span class="garmin-badge">GARMIN CONNECT</span>
-        <h2>Retrouve ton entraînement.</h2>
-        <p class="login-intro">Connecte ton compte. À la première visite, ton historique est importé avant la prise en main avec ton coach.</p>
-        <div class="field"><label for="email">Adresse e-mail Garmin</label><input id="email" name="email" type="email" autocomplete="username" inputmode="email" placeholder="toi@exemple.com" required></div>
-        <div class="field"><label for="password">Mot de passe Garmin</label><div class="field-control"><input id="password" name="password" type="password" autocomplete="current-password" placeholder="••••••••••••" required><button class="password-toggle" id="passwordToggle" type="button" aria-label="Maintenir pour afficher le mot de passe" aria-pressed="false"><span class="eye-icon" aria-hidden="true"></span></button></div><small class="hold-hint">Maintiens l’œil pour afficher</small></div>
-        <div class="field" id="mfaField" hidden><label for="mfaCode">Code reçu par e-mail</label><input id="mfaCode" name="mfaCode" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="12" placeholder="Code de vérification Garmin"></div>
-        <button class="submit" type="submit">Se connecter avec Garmin →</button>
+        <span class="account-badge">COMPTE MOTIONEST</span>
+        <div class="auth-tabs" role="tablist" aria-label="Accès au compte"><button class="auth-tab active" id="loginTab" type="button" role="tab" aria-selected="true">Se connecter</button><button class="auth-tab" id="registerTab" type="button" role="tab" aria-selected="false">Créer un compte</button></div>
+        <h2 id="authTitle">Retrouve ton entraînement.</h2>
+        <p class="login-intro" id="authIntro">Connecte-toi à ton compte Motionest. Tes applications sportives seront reliées séparément.</p>
+        <div class="field" id="firstNameField" hidden><label for="firstName">Prénom</label><input id="firstName" name="firstName" type="text" autocomplete="given-name" maxlength="80" placeholder="Ton prénom"></div>
+        <div class="field"><label for="email">Adresse e-mail</label><input id="email" name="email" type="email" autocomplete="username" inputmode="email" placeholder="toi@exemple.com" required></div>
+        <div class="field"><label for="password">Mot de passe Motionest</label><div class="field-control"><input id="password" name="password" type="password" autocomplete="current-password" minlength="10" maxlength="1024" placeholder="10 caractères minimum" required><button class="password-toggle" id="passwordToggle" type="button" aria-label="Maintenir pour afficher le mot de passe" aria-pressed="false"><span class="eye-icon" aria-hidden="true"></span></button></div><small class="hold-hint">Maintiens l’œil pour afficher</small></div>
+        <button class="submit" type="submit">Se connecter →</button>
         <p class="form-status" id="formStatus" role="status" aria-live="polite"></p>
       </form>
     </section>
   </main>
   <script>
     const form=document.getElementById('connect'),status=document.getElementById('formStatus');
-    const password=document.getElementById('password'),passwordToggle=document.getElementById('passwordToggle'),mfaField=document.getElementById('mfaField'),mfaCode=document.getElementById('mfaCode');
+    const password=document.getElementById('password'),passwordToggle=document.getElementById('passwordToggle'),loginTab=document.getElementById('loginTab'),registerTab=document.getElementById('registerTab'),firstNameField=document.getElementById('firstNameField'),firstName=document.getElementById('firstName'),authTitle=document.getElementById('authTitle'),authIntro=document.getElementById('authIntro');
+    let authMode='login';
     const showPassword=()=>{password.type='text';passwordToggle.setAttribute('aria-pressed','true')};
     const hidePassword=()=>{password.type='password';passwordToggle.setAttribute('aria-pressed','false')};
     passwordToggle.addEventListener('pointerdown',event=>{event.preventDefault();showPassword();passwordToggle.setPointerCapture?.(event.pointerId)});
@@ -113,19 +117,21 @@
     passwordToggle.addEventListener('keydown',event=>{if(event.key===' '||event.key==='Enter'){event.preventDefault();showPassword()}});
     passwordToggle.addEventListener('keyup',event=>{if(event.key===' '||event.key==='Enter')hidePassword()});
     const setStatus=(message,state='')=>{status.textContent=message;status.dataset.state=state};
+    function setAuthMode(mode){authMode=mode;const registering=mode==='register';loginTab.classList.toggle('active',!registering);registerTab.classList.toggle('active',registering);loginTab.setAttribute('aria-selected',String(!registering));registerTab.setAttribute('aria-selected',String(registering));firstNameField.hidden=!registering;firstName.required=registering;password.autocomplete=registering?'new-password':'current-password';authTitle.textContent=registering?'Commence ton accompagnement.':'Retrouve ton entraînement.';authIntro.textContent=registering?'Crée ton compte Motionest. Tu pourras ensuite définir ton objectif et connecter tes applications sportives.':'Connecte-toi à ton compte Motionest. Tes applications sportives seront reliées séparément.';form.querySelector('.submit').textContent=registering?'Créer mon compte →':'Se connecter →';setStatus('')}
+    loginTab.addEventListener('click',()=>setAuthMode('login'));registerTab.addEventListener('click',()=>setAuthMode('register'));
     form.addEventListener('submit',async event=>{
       event.preventDefault();
       if(!form.reportValidity())return;
       hidePassword();
       const button=form.querySelector('.submit'),values=new FormData(form);
-      button.disabled=true;button.textContent='Connexion en cours…';setStatus('Vérification du compte…');
+      button.disabled=true;button.textContent=authMode==='register'?'Création en cours…':'Connexion en cours…';setStatus('Vérification du compte…');
       try{
-        const response=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:values.get('email'),password:values.get('password'),mfaCode:values.get('mfaCode')})});
+        const response=await fetch(`/api/account/${authMode}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({firstName:values.get('firstName'),email:values.get('email'),password:values.get('password')})});
         const raw=await response.text();let data={};try{data=JSON.parse(raw)}catch(parseError){}
-        if(!response.ok){if(data.mfaRequired){mfaField.hidden=false;mfaCode.required=true;mfaCode.focus();button.textContent='Valider le code Garmin →';setStatus(data.message||'Saisis le code reçu par e-mail.');return}setStatus(data.message||`Connexion impossible (${response.status}).`,'error');return}
+        if(!response.ok){setStatus(data.message||`Connexion impossible (${response.status}).`,'error');return}
         setStatus(data.message||'Connexion réussie.');window.location.assign(data.redirect||'/dashboard');
       }catch(error){setStatus('Connexion impossible. Vérifie que Motionest est bien ouvert puis réessaie.','error')}
-      finally{button.disabled=false;if(mfaField.hidden)button.textContent='Se connecter avec Garmin →';else if(!button.textContent.includes('Valider'))button.textContent='Valider le code Garmin →'}
+      finally{button.disabled=false;button.textContent=authMode==='register'?'Créer mon compte →':'Se connecter →'}
     });
     const insights=[
       'Tu es régulier depuis 8 semaines. Tes sorties longues progressent, mais tes séances rapides manquent encore de récupération.',

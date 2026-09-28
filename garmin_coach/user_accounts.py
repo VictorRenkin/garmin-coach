@@ -1,8 +1,8 @@
 """Identités web et sessions isolées des athlètes Motionest.
 
-Garmin authentifie la personne, puis Motionest émet une session signée qui ne
-contient qu'un identifiant opaque. Les mots de passe Garmin ne sont jamais
-persistés et les adresses e-mail ne servent jamais de chemin de stockage.
+Le compte Motionest est indépendant des intégrations sportives. Les mots de
+passe sont dérivés avec scrypt et les sessions ne contiennent qu'un identifiant
+opaque. Les adresses e-mail ne servent jamais de chemin de stockage.
 """
 from __future__ import annotations
 
@@ -24,6 +24,11 @@ from .config import GLOBAL_DATA_DIR, SECRETS_DIR
 USERS_FILE = GLOBAL_DATA_DIR / "users.json"
 SESSION_KEY_FILE = SECRETS_DIR / "web_session.key"
 SESSION_TTL_SECONDS = 8 * 60 * 60
+PASSWORD_MIN_LENGTH = 10
+PASSWORD_MAX_LENGTH = 1024
+PASSWORD_SCRYPT_N = 2**14
+PASSWORD_SCRYPT_R = 8
+PASSWORD_SCRYPT_P = 1
 _LOCK = threading.RLock()
 _WORKSPACE_LOCKS: dict[str, threading.Lock] = {}
 _USER_ID_CHARS = frozenset(
@@ -45,11 +50,99 @@ def _normalize_email(email: str) -> str:
         or normalized.count("@") != 1
         or any(char.isspace() for char in normalized)
     ):
-        raise ValueError("Adresse e-mail Garmin invalide.")
+        raise ValueError("Adresse e-mail invalide.")
     local, domain = normalized.split("@", 1)
     if not local or "." not in domain or domain.startswith(".") or domain.endswith("."):
-        raise ValueError("Adresse e-mail Garmin invalide.")
+        raise ValueError("Adresse e-mail invalide.")
     return normalized
+
+
+def _validate_password(password: str) -> None:
+    if len(password) < PASSWORD_MIN_LENGTH:
+        raise ValueError(
+            f"Le mot de passe doit contenir au moins {PASSWORD_MIN_LENGTH} caractères."
+        )
+    if len(password) > PASSWORD_MAX_LENGTH:
+        raise ValueError("Le mot de passe est trop long.")
+
+
+def _password_digest(password: str, salt: bytes) -> bytes:
+    return hashlib.scrypt(
+        password.encode("utf-8"),
+        salt=salt,
+        n=PASSWORD_SCRYPT_N,
+        r=PASSWORD_SCRYPT_R,
+        p=PASSWORD_SCRYPT_P,
+        dklen=32,
+    )
+
+
+def register_account(email: str, password: str, first_name: str = "") -> dict[str, Any]:
+    """Crée un compte Motionest autonome et retourne son identité publique."""
+    normalized = _normalize_email(email)
+    _validate_password(password)
+    clean_name = " ".join(first_name.strip().split())
+    if len(clean_name) > 80:
+        raise ValueError("Le prénom est trop long.")
+    with _LOCK:
+        users = _load_users()
+        if any(str(item.get("email", "")).lower() == normalized for item in users):
+            raise ValueError("Un compte Motionest existe déjà avec cette adresse.")
+        salt = secrets.token_bytes(16)
+        user = {
+            "email": normalized,
+            "id": "u_" + secrets.token_urlsafe(18).replace("-", "_"),
+            "first_name": clean_name,
+            "password_salt": _urlsafe_encode(salt),
+            "password_hash": _urlsafe_encode(_password_digest(password, salt)),
+            "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "connections": 0,
+            "activities_imported": 0,
+            "onboarding_complete": False,
+        }
+        users.append(user)
+        _save_users(users)
+        return {"id": user["id"], "email": normalized, "firstName": clean_name}
+
+
+def authenticate_account(email: str, password: str) -> dict[str, Any] | None:
+    """Vérifie les identifiants Motionest avec une comparaison constante."""
+    password_length_valid = len(password) <= PASSWORD_MAX_LENGTH
+    try:
+        normalized = _normalize_email(email)
+    except ValueError:
+        normalized = "invalid@example.invalid"
+    with _LOCK:
+        user = next(
+            (
+                item
+                for item in _load_users()
+                if str(item.get("email", "")).lower() == normalized
+            ),
+            None,
+        )
+    try:
+        salt = _urlsafe_decode(str(user.get("password_salt") or "")) if user else b""
+        expected = _urlsafe_decode(str(user.get("password_hash") or "")) if user else b""
+    except (ValueError, TypeError):
+        salt, expected = b"", b""
+    if len(salt) != 16 or len(expected) != 32:
+        salt, expected = b"\0" * 16, b"\0" * 32
+    supplied = _password_digest(password[:PASSWORD_MAX_LENGTH], salt)
+    if (
+        user is None
+        or not password_length_valid
+        or not hmac.compare_digest(supplied, expected)
+    ):
+        return None
+    user_id = str(user.get("id") or "")
+    if not _valid_user_id(user_id):
+        return None
+    return {
+        "id": user_id,
+        "email": str(user.get("email") or ""),
+        "firstName": str(user.get("first_name") or ""),
+    }
 
 
 def _load_users() -> list[dict[str, Any]]:

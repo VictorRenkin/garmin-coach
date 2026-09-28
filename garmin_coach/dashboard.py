@@ -47,8 +47,10 @@ from .garmin import (
 from .garmin_workouts import publish_plan, remove_future_sessions, replace_future_plan
 from .manager import MANAGER_EMAIL, manager_authorized, manager_cookie, manager_login, manager_stats
 from .user_accounts import (
+    authenticate_account,
     create_session,
     ensure_user_record,
+    register_account,
     record_login,
     session_cookie,
     user_from_cookie,
@@ -844,7 +846,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
-        if path in {"/api/login", "/api/logout", "/api/manager/logout"}:
+        if path in {
+            "/api/account/login",
+            "/api/account/register",
+            "/api/login",
+            "/api/logout",
+            "/api/manager/logout",
+        }:
             self._do_POST()
             return
         if path == "/api/coach/config":
@@ -882,6 +890,64 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         "Path=/; Max-Age=0"
                     )
                 },
+            )
+            return
+        if path in {"/api/account/login", "/api/account/register"}:
+            try:
+                content_length = int(self.headers.get("Content-Length", "0"))
+                if content_length < 0 or content_length > 16_384:
+                    raise ValueError("Requête de connexion trop volumineuse.")
+                body = json.loads(self.rfile.read(content_length) or b"{}")
+                if not isinstance(body, dict):
+                    raise ValueError("Requête de connexion invalide.")
+                email = str(body.get("email") or "").strip()
+                password = str(body.get("password") or "")
+                if not email or not password:
+                    raise ValueError("L’adresse e-mail et le mot de passe sont requis.")
+                if path == "/api/account/register":
+                    account = register_account(
+                        email,
+                        password,
+                        str(body.get("firstName") or ""),
+                    )
+                    message = "Ton compte Motionest est créé."
+                    created = True
+                else:
+                    account = authenticate_account(email, password)
+                    if account is None:
+                        _json_response(
+                            self,
+                            {"ok": False, "message": "Adresse e-mail ou mot de passe incorrect."},
+                            status=401,
+                        )
+                        return
+                    message = "Connexion réussie."
+                    created = False
+                user_id = str(account["id"])
+                record_login(
+                    str(account["email"]),
+                    user_id,
+                    imported=0,
+                    onboarding_complete=False,
+                )
+                user_session = create_session(user_id)
+            except (ValueError, TypeError, json.JSONDecodeError) as exc:
+                _json_response(self, {"ok": False, "message": str(exc)}, status=400)
+                return
+            _json_response(
+                self,
+                {
+                    "ok": True,
+                    "role": "athlete",
+                    "created": created,
+                    "redirect": "/dashboard",
+                    "message": message,
+                    "user": {
+                        "firstName": account.get("firstName", ""),
+                        "email": account["email"],
+                    },
+                },
+                headers={"Set-Cookie": session_cookie(user_session)},
             )
             return
         if path == "/api/login":

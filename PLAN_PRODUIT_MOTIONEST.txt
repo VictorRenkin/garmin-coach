@@ -1,0 +1,127 @@
+PLAN PRODUIT MOTIONEST
+=====================
+
+OBJECTIF
+--------
+Transformer le prototype actuel en un produit de coaching sportif commercial,
+sécurisé et multi-utilisateur. Le compte Motionest reste indépendant de Garmin,
+Strava et des autres plateformes. L'utilisateur garde toujours le contrôle : il
+peut utiliser l'IA ou modifier lui-même son programme.
+
+PRINCIPES NON NÉGOCIABLES
+-------------------------
+- Le dépôt GitHub reste privé.
+- Les secrets, clés API, jetons et traitements sensibles restent côté serveur.
+- Chaque utilisateur accède uniquement à ses propres données.
+- Les mots de passe Motionest sont hachés, jamais enregistrés en clair.
+- Les connexions Garmin/Strava sont des intégrations, pas le compte Motionest.
+- Une proposition de l'IA ne modifie rien sans validation de l'utilisateur.
+- Les calculs déterministes sont faits par le code afin de limiter les tokens IA.
+- L'utilisateur peut réaliser manuellement les opérations qui ne nécessitent pas l'IA.
+- Le produit emploie un langage positif. Il ne présente pas le profil comme
+  « incomplet » : l'analyse s'enrichit au fil des activités.
+
+PARCOURS UTILISATEUR CIBLE
+--------------------------
+1. Créer un compte Motionest ou se connecter.
+2. Vérifier son adresse e-mail et pouvoir réinitialiser son mot de passe.
+3. Répondre à un onboarding progressif : pratique, niveau, objectif, échéance,
+   disponibilités, contraintes, préférences, fatigue et douleurs déclarées.
+4. Connecter facultativement Garmin, Strava ou une autre plateforme.
+5. Importer les activités et afficher clairement ce qui a été récupéré.
+6. Laisser le code calculer les statistiques et tendances utiles.
+7. Faire produire par l'IA une analyse générale compacte du profil et de
+   l'objectif, sans lui transmettre tout l'historique brut.
+8. Construire le premier plan avec l'utilisateur, puis demander sa confirmation.
+9. Envoyer les séances confirmées vers la plateforme connectée.
+10. À chaque connexion, afficher immédiatement le tableau de bord et synchroniser
+    les nouvelles activités en arrière-plan.
+11. Associer par le code chaque nouvelle activité à une séance prévue. Demander
+    confirmation à l'utilisateur uniquement lorsque l'association est ambiguë.
+12. Proposer une analyse IA facultative des nouveautés.
+13. Adapter le programme chaque semaine selon ce qui a réellement été réalisé,
+    les disponibilités, le ressenti et l'objectif, puis faire confirmer les changements.
+
+ÉTATS D'UNE SÉANCE
+------------------
+- Prévue
+- Réalisée
+- Réalisée avec adaptation
+- Partiellement réalisée
+- Activité libre
+- Non détectée
+- À confirmer par l'utilisateur
+
+RÉPARTITION CODE / IA
+---------------------
+Le code réalise : import, nettoyage, dédoublonnage, association aux séances,
+distances, durées, allures, fréquence, charge, régularité, tendances, comparaison
+prévu/réalisé, règles de sécurité, limites de progression et options possibles.
+
+L'IA reçoit seulement un résumé chiffré compact et structuré. Elle sert à :
+- approfondir intelligemment l'onboarding ;
+- expliquer le profil et la cohérence de l'objectif ;
+- proposer le plan initial ;
+- comprendre les demandes écrites naturellement ;
+- choisir parmi des adaptations encadrées ;
+- expliquer les décisions de façon personnalisée et encourageante.
+
+Les tâches simples utilisent un modèle économique avec un faible effort de
+raisonnement et une sortie plafonnée. Les analyses initiales et hebdomadaires
+utilisent un effort moyen. Un modèle plus coûteux reste réservé aux cas complexes.
+
+CRÉDITS
+-------
+- Le solde de crédits IA est visible dans l'en-tête et dans le compte.
+- Le détail présente le solde, le renouvellement et l'historique des mouvements.
+- La synchronisation, la consultation et les modifications manuelles ne consomment
+  pas de crédits IA.
+- Les crédits sont débités côté serveur uniquement après une opération IA réussie.
+- En cas d'erreur technique, aucun crédit n'est perdu.
+- Une alerte discrète apparaît lorsque le solde devient faible.
+- Sans crédit, le produit reste consultable et modifiable manuellement.
+- Des packs et/ou abonnements pourront être achetés via un paiement vérifié côté serveur.
+
+SÉCURITÉ ET CONFIDENTIALITÉ
+---------------------------
+- Sessions sécurisées par cookies HttpOnly, Secure en production et SameSite.
+- Autorisation contrôlée côté serveur sur chaque route et chaque objet.
+- Aucun identifiant utilisateur fourni par le navigateur n'autorise l'accès aux données.
+- Jetons des plateformes chiffrés au repos et révocables.
+- Protection contre brute force, CSRF, injections et abus d'API.
+- Journal d'audit sans mot de passe, jeton ou donnée sportive sensible.
+- Suppression de compte, export des données, consentement et politique de confidentialité.
+- Sauvegardes chiffrées et procédure de restauration testée.
+
+ADMINISTRATION
+--------------
+L'espace administrateur affiche uniquement ce qui est nécessaire au fonctionnement :
+comptes, progression de l'onboarding, intégrations connectées, état des
+synchronisations, erreurs techniques, consommation IA et crédits. Il ne doit pas
+exposer inutilement le contenu sportif privé.
+
+ORDRE DE RÉALISATION
+--------------------
+[BASE FAITE] 1. Compte Motionest : inscription, connexion et déconnexion.
+             La validation d'e-mail, la récupération et le durcissement restent
+             volontairement dans les étapes suivantes.
+[À FAIRE]  2. Validation d'e-mail et récupération de mot de passe.
+[À FAIRE]  3. Durcissement des sessions et protection contre les abus.
+[À FAIRE]  4. Onboarding conversationnel et profil sportif.
+[À FAIRE]  5. Garmin comme intégration séparée du login.
+[À FAIRE]  6. Strava et import manuel comme intégrations supplémentaires.
+[À FAIRE]  7. Synchronisation en arrière-plan à chaque connexion.
+[À FAIRE]  8. Association automatique activité/séance avec confirmation des ambiguïtés.
+[À FAIRE]  9. Résumé chiffré compact et analyse générale IA.
+[À FAIRE] 10. Construction et confirmation du premier plan.
+[À FAIRE] 11. Bilan et adaptation hebdomadaires du programme.
+[À FAIRE] 12. Modifications manuelles complètes du programme.
+[À FAIRE] 13. Portefeuille de crédits, historique et limites serveur.
+[À FAIRE] 14. Paiements, packs et abonnements.
+[À FAIRE] 15. Hébergement, domaine, HTTPS, base de données et sauvegardes.
+[À FAIRE] 16. Conformité, observabilité, tests de sécurité et lancement pilote.
+
+RÈGLE DE LIVRAISON
+------------------
+Chaque étape est développée séparément, testée, commitée et poussée sur le dépôt
+GitHub privé avant de commencer l'étape suivante.
