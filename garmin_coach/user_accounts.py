@@ -1,0 +1,259 @@
+"""Identités web et sessions isolées des athlètes Motionest.
+
+Garmin authentifie la personne, puis Motionest émet une session signée qui ne
+contient qu'un identifiant opaque. Les mots de passe Garmin ne sont jamais
+persistés et les adresses e-mail ne servent jamais de chemin de stockage.
+"""
+from __future__ import annotations
+
+import base64
+import hashlib
+import hmac
+import json
+import secrets
+import threading
+import time
+from contextlib import contextmanager
+from datetime import datetime
+from http.cookies import SimpleCookie
+from typing import Any
+
+from .config import GLOBAL_DATA_DIR, SECRETS_DIR
+
+
+USERS_FILE = GLOBAL_DATA_DIR / "users.json"
+SESSION_KEY_FILE = SECRETS_DIR / "web_session.key"
+SESSION_TTL_SECONDS = 8 * 60 * 60
+_LOCK = threading.RLock()
+_WORKSPACE_LOCKS: dict[str, threading.Lock] = {}
+_USER_ID_CHARS = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+)
+
+
+def _valid_user_id(user_id: str) -> bool:
+    return bool(user_id) and len(user_id) <= 80 and all(
+        char in _USER_ID_CHARS for char in user_id
+    )
+
+
+def _normalize_email(email: str) -> str:
+    normalized = email.strip().lower()
+    if (
+        not normalized
+        or len(normalized) > 254
+        or normalized.count("@") != 1
+        or any(char.isspace() for char in normalized)
+    ):
+        raise ValueError("Adresse e-mail Garmin invalide.")
+    local, domain = normalized.split("@", 1)
+    if not local or "." not in domain or domain.startswith(".") or domain.endswith("."):
+        raise ValueError("Adresse e-mail Garmin invalide.")
+    return normalized
+
+
+def _load_users() -> list[dict[str, Any]]:
+    try:
+        payload = (
+            json.loads(USERS_FILE.read_text(encoding="utf-8"))
+            if USERS_FILE.is_file()
+            else []
+        )
+    except (OSError, json.JSONDecodeError):
+        payload = []
+    if not isinstance(payload, list):
+        return []
+    return [item for item in payload if isinstance(item, dict)]
+
+
+def _save_users(users: list[dict[str, Any]]) -> None:
+    USERS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    temporary = USERS_FILE.with_suffix(".tmp")
+    temporary.write_text(
+        json.dumps(users, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    temporary.replace(USERS_FILE)
+
+
+def user_id_for_email(email: str) -> tuple[str, bool]:
+    """Retourne un id opaque sans créer de compte avant le succès Garmin."""
+    normalized = _normalize_email(email)
+    with _LOCK:
+        user = next(
+            (
+                item
+                for item in _load_users()
+                if str(item.get("email", "")).lower() == normalized
+            ),
+            None,
+        )
+        if user and _valid_user_id(str(user.get("id") or "")):
+            return str(user["id"]), False
+        # Aléatoire, opaque, et non persisté avant une authentification réussie.
+        return "u_" + secrets.token_urlsafe(18).replace("-", "_"), True
+
+
+def ensure_user_record(email: str, proposed_user_id: str) -> tuple[str, bool]:
+    """Crée l'identité après Garmin et retourne l'id canonique atomiquement.
+
+    Deux connexions simultanées du même nouveau compte convergent ainsi vers le
+    même espace au lieu de produire deux sessions pointant vers deux dossiers.
+    """
+    normalized = _normalize_email(email)
+    if not _valid_user_id(proposed_user_id):
+        raise ValueError("Identifiant utilisateur invalide.")
+    with _LOCK:
+        users = _load_users()
+        user = next(
+            (
+                item
+                for item in users
+                if str(item.get("email", "")).lower() == normalized
+            ),
+            None,
+        )
+        created = user is None
+        if user is None:
+            user = {
+                "email": normalized,
+                "id": proposed_user_id,
+                "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                "connections": 0,
+                "activities_imported": 0,
+            }
+            users.append(user)
+        canonical = str(user.get("id") or "")
+        if not _valid_user_id(canonical):
+            canonical = proposed_user_id
+            user["id"] = canonical
+        _save_users(users)
+        return canonical, created
+
+
+def record_login(
+    email: str,
+    user_id: str,
+    *,
+    imported: int,
+    onboarding_complete: bool,
+) -> None:
+    """Met à jour les statistiques du compte sous le même verrou que sa création."""
+    normalized = _normalize_email(email)
+    if not _valid_user_id(user_id):
+        raise ValueError("Identifiant utilisateur invalide.")
+    now = datetime.now().astimezone().isoformat(timespec="seconds")
+    with _LOCK:
+        users = _load_users()
+        user = next(
+            (
+                item
+                for item in users
+                if str(item.get("email", "")).lower() == normalized
+            ),
+            None,
+        )
+        if user is None:
+            raise ValueError("Compte utilisateur introuvable après authentification.")
+        # Ne permet jamais à un appel concurrent de remplacer l'espace canonique.
+        if str(user.get("id") or "") != user_id:
+            raise ValueError("Session utilisateur incohérente.")
+        user["last_login"] = now
+        user["connections"] = int(user.get("connections") or 0) + 1
+        user["activities_imported"] = int(user.get("activities_imported") or 0) + max(
+            0, int(imported)
+        )
+        user["onboarding_complete"] = bool(onboarding_complete)
+        _save_users(users)
+
+
+def list_user_records() -> list[dict[str, Any]]:
+    """Retourne un instantané détaché pour l'agrégation manager."""
+    with _LOCK:
+        return json.loads(json.dumps(_load_users()))
+
+
+@contextmanager
+def user_login_lock(user_id: str):
+    """Sérialise synchronisation et écriture des jetons d'un même compte."""
+    if not _valid_user_id(user_id):
+        raise ValueError("Identifiant utilisateur invalide.")
+    with _LOCK:
+        lock = _WORKSPACE_LOCKS.setdefault(user_id, threading.Lock())
+    with lock:
+        yield
+
+
+def _urlsafe_encode(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).decode().rstrip("=")
+
+
+def _urlsafe_decode(value: str) -> bytes:
+    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+
+
+def _session_key() -> bytes:
+    with _LOCK:
+        try:
+            key = _urlsafe_decode(SESSION_KEY_FILE.read_text(encoding="ascii").strip())
+        except (OSError, ValueError):
+            key = b""
+        if len(key) >= 32:
+            return key
+        key = secrets.token_bytes(32)
+        SESSION_KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        SESSION_KEY_FILE.write_text(_urlsafe_encode(key), encoding="ascii")
+        return key
+
+
+def create_session(user_id: str) -> str:
+    """Crée une session signée qui reste valide après un redémarrage."""
+    if not _valid_user_id(user_id):
+        raise ValueError("Identifiant utilisateur invalide.")
+    expires = int(time.time()) + SESSION_TTL_SECONDS
+    payload = f"{user_id}:{expires}:{secrets.token_urlsafe(16)}".encode("ascii")
+    encoded = _urlsafe_encode(payload)
+    signature = hmac.new(_session_key(), encoded.encode("ascii"), hashlib.sha256).digest()
+    return f"{encoded}.{_urlsafe_encode(signature)}"
+
+
+def _cookie_value(header: str, name: str) -> str:
+    try:
+        cookie = SimpleCookie()
+        cookie.load(header)
+        return cookie[name].value if name in cookie else ""
+    except (KeyError, ValueError):
+        return ""
+
+
+def user_from_cookie(cookie: str) -> str | None:
+    token = _cookie_value(cookie, "motionest_session")
+    encoded, separator, supplied_signature = token.partition(".")
+    if not separator or not encoded or not supplied_signature:
+        return None
+    expected = hmac.new(
+        _session_key(), encoded.encode("ascii"), hashlib.sha256
+    ).digest()
+    try:
+        signature = _urlsafe_decode(supplied_signature)
+        payload = _urlsafe_decode(encoded).decode("ascii")
+        user_id, expires_text, _nonce = payload.split(":", 2)
+        expires = int(expires_text)
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if not hmac.compare_digest(signature, expected):
+        return None
+    if expires < int(time.time()) or not _valid_user_id(user_id):
+        return None
+    return user_id
+
+
+def session_cookie(token: str) -> str:
+    return (
+        f"motionest_session={token}; HttpOnly; SameSite=Strict; "
+        f"Path=/; Max-Age={SESSION_TTL_SECONDS}"
+    )
+
+
+def public_user_identifier(email: str) -> str:
+    """Aide de compatibilité pour les tests; ne jamais l'utiliser comme chemin."""
+    return hashlib.sha256(_normalize_email(email).encode()).hexdigest()[:12]

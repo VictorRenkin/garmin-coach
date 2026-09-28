@@ -84,3 +84,25 @@ def test_future_workout_is_unscheduled_then_deleted(tmp_path) -> None:
         "/workout-service/workout/800",
     ]
     assert "garmin" not in json.loads(target.read_text(encoding="utf-8"))["seances"][0]
+
+
+def test_only_selected_future_workouts_are_removed(tmp_path) -> None:
+    target = tmp_path / "plan.json"
+    first = {**session().model_dump(mode="json"), "garmin": {"workout_id": 800}}
+    second = {
+        **session().model_copy(update={"date": "2026-07-31", "titre": "À garder"}).model_dump(mode="json"),
+        "garmin": {"workout_id": 801},
+    }
+    target.write_text(
+        json.dumps({"seances": [first, second]}), encoding="utf-8"
+    )
+    client = FakeCalendarClient()
+
+    removed = remove_future_sessions(
+        client, target, today=date(2026, 7, 23), session_indexes={0}
+    )
+
+    saved = json.loads(target.read_text(encoding="utf-8"))["seances"]
+    assert removed == 1
+    assert "garmin" not in saved[0]
+    assert saved[1]["garmin"]["workout_id"] == 801

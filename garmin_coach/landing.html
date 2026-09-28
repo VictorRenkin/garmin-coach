@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Motionest — Coaching built around your real life.</title>
+  <meta name="description" content="Motionest transforme ton historique sportif en coaching personnel, vivant et adapté à ta vraie vie.">
+  <style>
+    :root{--ink:#06100d;--lime:#c9f457;--mint:#86dfc2;--white:#fff;--muted:#b8c5bf;--line:rgba(255,255,255,.16)}
+    *{box-sizing:border-box}
+    html{scroll-behavior:smooth}
+    body{margin:0;background:var(--ink);color:var(--white);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    button,input{font:inherit}
+    a{color:inherit}
+    .page{min-height:100svh;position:relative;isolation:isolate;overflow:hidden;background:var(--ink)}
+    .hero-photo{position:absolute;z-index:-3;inset:0;width:100%;height:100%;object-fit:cover;object-position:center 43%;filter:saturate(.82) contrast(1.05)}
+    .page:before{content:"";position:absolute;z-index:-2;inset:0;background:linear-gradient(90deg,rgba(2,12,9,.97) 0%,rgba(2,12,9,.89) 33%,rgba(2,12,9,.53) 64%,rgba(2,12,9,.64) 100%),linear-gradient(0deg,rgba(2,12,9,.76),transparent 45%)}
+    .page:after{content:"";position:absolute;z-index:-1;right:-8vw;bottom:-33vh;width:70vw;height:62vh;background:var(--lime);filter:blur(160px);opacity:.1;pointer-events:none}
+    .nav{width:min(1240px,calc(100% - 48px));height:80px;margin:auto;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line)}
+    .brand{display:flex;align-items:center;gap:11px;text-decoration:none;font-size:20px;font-weight:820;letter-spacing:-.045em}
+    .mark{width:34px;height:34px;border:1px solid rgba(201,244,87,.62);border-radius:50%;position:relative;box-shadow:0 0 0 5px rgba(201,244,87,.035)}
+    .mark:before,.mark:after{content:"";position:absolute;background:var(--lime);border-radius:99px;transform:rotate(-35deg)}
+    .mark:before{width:18px;height:4px;left:7px;top:9px}.mark:after{width:13px;height:4px;left:11px;top:19px}
+    .nav-cta{border:1px solid rgba(255,255,255,.48);padding:9px 15px;border-radius:99px;text-decoration:none;color:#eef3f0;font-size:12px;font-weight:720;transition:.18s}
+    .nav-cta:hover,.nav-cta:focus-visible{border-color:var(--lime);color:var(--lime);outline:none}
+    .hero{width:min(1240px,calc(100% - 48px));min-height:calc(100svh - 80px);margin:auto;display:grid;grid-template-columns:minmax(0,1fr) minmax(340px,410px);align-items:center;gap:clamp(42px,6vw,92px);padding:34px 0 62px}
+    .hero-copy{max-width:720px}
+    .eyebrow{display:inline-flex;align-items:center;gap:9px;text-transform:uppercase;letter-spacing:.17em;font-size:10px;font-weight:850;color:var(--lime)}
+    .eyebrow:before{content:"";width:26px;height:1px;background:currentColor}
+    h1{max-width:760px;font-size:clamp(50px,6.1vw,88px);line-height:.9;letter-spacing:-.067em;margin:20px 0 23px;font-weight:790}
+    .accent{display:block;color:var(--lime);font-style:italic;font-weight:540}
+    .lead{max-width:610px;font-size:clamp(16px,1.35vw,19px);line-height:1.55;color:#d2dbd6;margin:0}
+    .coach-preview{max-width:610px;margin-top:27px;padding:16px 18px;border:1px solid rgba(201,244,87,.28);border-radius:17px;background:rgba(5,16,13,.68);backdrop-filter:blur(15px);box-shadow:0 22px 58px rgba(0,0,0,.24)}
+    .preview-top{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:10px}
+    .preview-label{display:flex;align-items:center;gap:9px;color:var(--lime);font-size:10px;font-weight:850;text-transform:uppercase;letter-spacing:.12em}
+    .live-dot{width:7px;height:7px;border-radius:50%;background:var(--lime);box-shadow:0 0 0 0 rgba(201,244,87,.55);animation:pulse 2s infinite}
+    .preview-meta{font-size:10px;color:#93a39c}
+    .coach-insight{min-height:43px;margin:0;color:#f1f5f2;font-size:13px;line-height:1.5;transition:opacity .2s,transform .2s}
+    .coach-insight.changing{opacity:0;transform:translateY(4px)}
+    .signals{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px}
+    .signal{border:1px solid rgba(255,255,255,.14);border-radius:99px;background:rgba(255,255,255,.045);color:#dce5e0;padding:6px 9px;font-size:9px;cursor:pointer;transition:.18s}
+    .signal:hover,.signal:focus-visible,.signal.active{border-color:var(--lime);color:var(--lime);background:rgba(201,244,87,.08);outline:none}
+    .login{align-self:center;background:rgba(5,16,13,.84);border:1px solid rgba(255,255,255,.21);border-radius:24px;padding:28px;backdrop-filter:blur(20px);box-shadow:0 30px 80px rgba(0,0,0,.38)}
+    .garmin-badge{display:inline-flex;font-size:9px;font-weight:880;letter-spacing:.1em;padding:7px 9px;border-radius:7px;color:#071410;background:#8dd9e8;white-space:nowrap}
+    .login h2{font-size:27px;letter-spacing:-.045em;margin:17px 0 5px}
+    .login-intro{font-size:13px;color:var(--muted);line-height:1.5;margin:0 0 21px}
+    .field{display:grid;gap:7px;margin-top:15px}
+    .field label{font-size:11px;color:#d9e1dd;font-weight:760}
+    .field-control{position:relative}
+    .field input{width:100%;border:1px solid rgba(255,255,255,.18);border-radius:12px;background:rgba(255,255,255,.06);color:#fff;padding:14px 15px;outline:none;transition:.18s}
+    .field input:hover{border-color:rgba(255,255,255,.3)}
+    .field input:focus{border-color:var(--lime);box-shadow:0 0 0 3px rgba(201,244,87,.1)}
+    .field-control input{padding-right:54px}
+    .password-toggle{position:absolute;top:50%;right:8px;display:grid;place-items:center;width:38px;height:38px;border:0;border-radius:9px;background:transparent;color:#bac6c0;cursor:pointer;transform:translateY(-50%);touch-action:none}
+    .password-toggle:hover,.password-toggle:focus-visible,.password-toggle[aria-pressed="true"]{color:var(--lime);background:rgba(201,244,87,.08);outline:none}
+    .eye-icon{width:18px;height:12px;border:2px solid currentColor;border-radius:70% 15%;position:relative;transform:rotate(45deg)}
+    .eye-icon:after{content:"";position:absolute;inset:2px;border-radius:50%;background:currentColor}
+    .hold-hint{display:block;margin-top:5px;color:#83928b;font-size:9px}
+    .submit{width:100%;border:0;border-radius:12px;background:var(--lime);color:#111a0b;font-weight:860;padding:15px;margin-top:20px;cursor:pointer;transition:.18s}
+    .submit:hover{filter:brightness(1.05);transform:translateY(-1px)}
+    .submit:focus-visible{outline:3px solid rgba(201,244,87,.32);outline-offset:2px}
+    .submit:disabled{opacity:.68;cursor:wait;transform:none}
+    .form-status{display:none;min-height:18px;margin:12px 0 0;color:var(--mint);font-size:12px;line-height:1.45}
+    .form-status:not(:empty){display:block}
+    .form-status[data-state="error"]{color:#ff9ba4}
+    @keyframes pulse{70%{box-shadow:0 0 0 9px rgba(201,244,87,0)}100%{box-shadow:0 0 0 0 rgba(201,244,87,0)}}
+    @media(max-width:960px){.hero{grid-template-columns:1fr;gap:32px;padding-top:42px;padding-bottom:70px}.hero-copy{max-width:740px}.login{order:-1;width:min(100%,520px)}.page:before{background:linear-gradient(180deg,rgba(2,12,9,.75),rgba(2,12,9,.92) 72%),linear-gradient(90deg,rgba(2,12,9,.75),rgba(2,12,9,.32))}.hero-photo{object-position:56% center}}
+    @media(max-width:560px){.nav,.hero{width:min(100% - 28px,1240px)}.nav{height:70px}.hero{min-height:calc(100svh - 70px);padding-top:30px}.nav-cta{padding:8px 11px}h1{font-size:clamp(45px,14.5vw,68px);margin-top:15px}.coach-preview{margin-top:23px}.preview-meta{display:none}.login{padding:22px;border-radius:19px}.login h2{font-size:24px}}
+    @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}.live-dot{animation:none}.coach-insight,.submit{transition:none}}
+  </style>
+</head>
+<body>
+  <main class="page">
+    <img class="hero-photo" src="/assets/motionest-hero.jpg" alt="Groupe de coureurs pendant une séance sur piste">
+    <nav class="nav" aria-label="Navigation principale">
+      <a class="brand" href="/"><span class="mark" aria-hidden="true"></span>Motionest</a>
+      <a class="nav-cta" href="#connect">Se connecter</a>
+    </nav>
+    <section class="hero">
+      <div class="hero-copy">
+        <div class="eyebrow">Un coaching qui part de tes vraies données</div>
+        <h1>Tu t’entraînes.<span class="accent">Motionest prépare la suite.</span></h1>
+        <p class="lead">Connecte Garmin. Motionest analyse ta régularité, tes intensités et ta récupération pour adapter chaque prochaine séance.</p>
+        <div class="coach-preview" aria-live="polite">
+          <div class="preview-top"><span class="preview-label"><i class="live-dot"></i>Regard du coach</span><span class="preview-meta">6 derniers mois</span></div>
+          <p class="coach-insight" id="coachInsight">Tu es régulier depuis 8 semaines. Tes sorties longues progressent, mais tes séances rapides manquent encore de récupération.</p>
+          <div class="signals" aria-label="Découvrir des exemples d’analyse"><button class="signal active" type="button" data-insight="0">Régularité · 8 sem.</button><button class="signal" type="button" data-insight="1">Intervalles · 6 séances</button><button class="signal" type="button" data-insight="2">Récupération · à surveiller</button></div>
+        </div>
+      </div>
+      <form class="login" id="connect" novalidate>
+        <span class="garmin-badge">GARMIN CONNECT</span>
+        <h2>Retrouve ton entraînement.</h2>
+        <p class="login-intro">Connecte ton compte. À la première visite, ton historique est importé avant la prise en main avec ton coach.</p>
+        <div class="field"><label for="email">Adresse e-mail Garmin</label><input id="email" name="email" type="email" autocomplete="username" inputmode="email" placeholder="toi@exemple.com" required></div>
+        <div class="field"><label for="password">Mot de passe Garmin</label><div class="field-control"><input id="password" name="password" type="password" autocomplete="current-password" placeholder="••••••••••••" required><button class="password-toggle" id="passwordToggle" type="button" aria-label="Maintenir pour afficher le mot de passe" aria-pressed="false"><span class="eye-icon" aria-hidden="true"></span></button></div><small class="hold-hint">Maintiens l’œil pour afficher</small></div>
+        <div class="field" id="mfaField" hidden><label for="mfaCode">Code reçu par e-mail</label><input id="mfaCode" name="mfaCode" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="12" placeholder="Code de vérification Garmin"></div>
+        <button class="submit" type="submit">Se connecter avec Garmin →</button>
+        <p class="form-status" id="formStatus" role="status" aria-live="polite"></p>
+      </form>
+    </section>
+  </main>
+  <script>
+    const form=document.getElementById('connect'),status=document.getElementById('formStatus');
+    const password=document.getElementById('password'),passwordToggle=document.getElementById('passwordToggle'),mfaField=document.getElementById('mfaField'),mfaCode=document.getElementById('mfaCode');
+    const showPassword=()=>{password.type='text';passwordToggle.setAttribute('aria-pressed','true')};
+    const hidePassword=()=>{password.type='password';passwordToggle.setAttribute('aria-pressed','false')};
+    passwordToggle.addEventListener('pointerdown',event=>{event.preventDefault();showPassword();passwordToggle.setPointerCapture?.(event.pointerId)});
+    passwordToggle.addEventListener('pointerup',hidePassword);
+    passwordToggle.addEventListener('pointercancel',hidePassword);
+    passwordToggle.addEventListener('lostpointercapture',hidePassword);
+    passwordToggle.addEventListener('blur',hidePassword);
+    passwordToggle.addEventListener('contextmenu',event=>event.preventDefault());
+    passwordToggle.addEventListener('keydown',event=>{if(event.key===' '||event.key==='Enter'){event.preventDefault();showPassword()}});
+    passwordToggle.addEventListener('keyup',event=>{if(event.key===' '||event.key==='Enter')hidePassword()});
+    const setStatus=(message,state='')=>{status.textContent=message;status.dataset.state=state};
+    form.addEventListener('submit',async event=>{
+      event.preventDefault();
+      if(!form.reportValidity())return;
+      hidePassword();
+      const button=form.querySelector('.submit'),values=new FormData(form);
+      button.disabled=true;button.textContent='Connexion en cours…';setStatus('Vérification du compte…');
+      try{
+        const response=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:values.get('email'),password:values.get('password'),mfaCode:values.get('mfaCode')})});
+        const raw=await response.text();let data={};try{data=JSON.parse(raw)}catch(parseError){}
+        if(!response.ok){if(data.mfaRequired){mfaField.hidden=false;mfaCode.required=true;mfaCode.focus();button.textContent='Valider le code Garmin →';setStatus(data.message||'Saisis le code reçu par e-mail.');return}setStatus(data.message||`Connexion impossible (${response.status}).`,'error');return}
+        setStatus(data.message||'Connexion réussie.');window.location.assign(data.redirect||'/dashboard');
+      }catch(error){setStatus('Connexion impossible. Vérifie que Motionest est bien ouvert puis réessaie.','error')}
+      finally{button.disabled=false;if(mfaField.hidden)button.textContent='Se connecter avec Garmin →';else if(!button.textContent.includes('Valider'))button.textContent='Valider le code Garmin →'}
+    });
+    const insights=[
+      'Tu es régulier depuis 8 semaines. Tes sorties longues progressent, mais tes séances rapides manquent encore de récupération.',
+      'Tes 6 séances d’intervalles montrent une meilleure tenue d’allure. Le prochain bloc peut être légèrement plus exigeant.',
+      'Ta charge a augmenté cette semaine. Je réduis la prochaine séance pour consolider tes progrès sans accumuler de fatigue.'
+    ],insight=document.getElementById('coachInsight'),signals=[...document.querySelectorAll('.signal')];
+    function showInsight(index){insight.classList.add('changing');signals.forEach((button,i)=>button.classList.toggle('active',i===index));setTimeout(()=>{insight.textContent=insights[index];insight.classList.remove('changing')},200)}
+    signals.forEach((button,index)=>button.addEventListener('click',()=>showInsight(index)));
+  </script>
+</body>
+</html>

@@ -5,9 +5,9 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
-from openai import OpenAI
 from pydantic import BaseModel, Field
 
+from .ai_provider import structured_completion
 from .ai_analysis import MissingOpenAIKeyError, _sanitized_metrics, load_analysis
 from .config import PLANS_DIR, PROFILE_FILE, Settings, ensure_directories
 from .coach_chat import list_messages
@@ -45,7 +45,7 @@ class PlannedSession(BaseModel):
 
 
 class WeeklyReview(BaseModel):
-    adherence: Literal["3/3", "2/3", "1/3", "0/3", "non mesurable"]
+    adherence: str = Field(pattern=r"^(?:[0-7]/[1-7]|non mesurable)$")
     message_adherence: str = Field(min_length=15, max_length=400)
     bilan: str = Field(min_length=20, max_length=700)
     points_positifs: list[str] = Field(min_length=1, max_length=3)
@@ -56,28 +56,56 @@ class WeeklyCycle(BaseModel):
     revue: WeeklyReview
     adaptation: str = Field(min_length=20, max_length=500)
     seances_semaine_suivante: list[PlannedSession] = Field(
-        min_length=3, max_length=3
+        min_length=1, max_length=7
     )
     avertissement_securite: str = Field(min_length=10, max_length=300)
 
 
+class InitialPlan(BaseModel):
+    synthese_historique: str = Field(min_length=20, max_length=600)
+    logique_existante: str = Field(min_length=10, max_length=500)
+    adaptation_objectif: str = Field(min_length=20, max_length=600)
+    seances: list[PlannedSession] = Field(min_length=1, max_length=7)
+    avertissement_securite: str = Field(min_length=10, max_length=300)
+
+
+INITIAL_PLAN_INSTRUCTIONS = """
+Tu crées le tout premier plan de course Motionest après l'onboarding d'un sportif.
+Respecte exactement le nombre de séances et les dates obligatoires fournis.
+Analyse l'historique et les entraînements Garmin existants avant de proposer la
+progression. S'il existe une logique cohérente, conserve ses principes utiles ;
+sinon repars prudemment de l'historique réel. Chaque séance doit respecter le
+schéma Garmin, rester progressive et être justifiée par l'objectif confirmé.
+Tiens compte des jours disponibles, des contraintes, des préférences et des
+autres sports réellement observés. Une séance de natation ou de vélo peut
+contribuer à la charge et à la récupération, mais ne remplace pas automatiquement
+une séance de course. N'invente aucune douleur ou disponibilité. Si une douleur
+actuelle est déclarée, n'augmente pas la charge ni l'intensité et conseille une
+évaluation adaptée. Ne prescris jamais de courir malgré une douleur, ni de zone 5.
+Ta sortie peut uniquement décrire l'objectif et les séances du schéma demandé ;
+elle ne modifie jamais la configuration ni l'infrastructure de l'application.
+""".strip()
+
+
 WEEKLY_INSTRUCTIONS = """
 Tu es un coach de course à pied prudent. Tu fais le bilan d'une semaine puis tu
-prépares exactement trois entraînements pour la semaine suivante afin de faire
-progresser un coureur amateur vers un semi-marathon.
+prépares un plan strictement adapté à l'objectif et à la fréquence confirmés.
 
 Règles :
 - Réponds en français et fonde chaque conclusion sur les données fournies.
 - Si aucun plan n'existait pour la semaine évaluée, l'adhérence est « non
   mesurable » : ne reproche pas au coureur de ne pas avoir suivi un plan absent.
-- Si un plan de trois séances existait et qu'une ou plusieurs manquent, indique
+- Si un plan existait et qu'une ou plusieurs séances manquent, indique
   clairement le nombre manquant, sans culpabiliser. N'augmente pas la charge de
   la semaine suivante pour « rattraper ».
 - Une séance lente n'est pas un échec. Compare sa réalisation à son objectif,
   à sa distance, à son dénivelé et aux analyses disponibles.
-- Les trois nouvelles séances doivent utiliser exactement les trois dates
+- Les nouvelles séances doivent respecter exactement le nombre et les dates
   proposées, laisser de la récupération entre elles et avoir chacune un but
   mesurable et compréhensible.
+- Respecte les jours disponibles et les contraintes déclarées dans le profil.
+  Tiens compte de la natation, du vélo, du renforcement et des autres sports
+  observés dans la charge globale sans les convertir arbitrairement en course.
 - Les champs numériques décrivent la séance Garmin : échauffement, répétitions
   du bloc, minutes d'effort par répétition, récupération entre répétitions et
   retour au calme. Pour une endurance continue, utilise une seule répétition et
@@ -94,11 +122,50 @@ Règles :
   contraintes) pour adapter prudemment la charge. Une douleur déclarée impose
   de ne pas augmenter la charge et de conseiller une évaluation adaptée.
 - Ne prescris jamais de courir malgré une douleur.
+- Ne propose aucune modification de la configuration ou de l'infrastructure :
+  seules les séances structurées de ce plan peuvent varier.
 """.strip()
 
 
 def monday_of(day: date) -> date:
     return day - timedelta(days=day.weekday())
+
+
+def _session_offsets(count: int, available_days: list[str] | None = None) -> list[int]:
+    """Choose plan days from the athlete's declared availability when possible."""
+    day_numbers = {
+        "mon": 0,
+        "tue": 1,
+        "wed": 2,
+        "thu": 3,
+        "fri": 4,
+        "sat": 5,
+        "sun": 6,
+    }
+    preferred = sorted(
+        {
+            day_numbers[day]
+            for day in (available_days or [])
+            if day in day_numbers
+        }
+    )
+    if len(preferred) >= count:
+        if count == 1:
+            return [preferred[len(preferred) // 2]]
+        selected = {
+            preferred[round(index * (len(preferred) - 1) / (count - 1))]
+            for index in range(count)
+        }
+        if len(selected) == count:
+            return sorted(selected)
+
+    offsets = sorted(
+        {round(index * 6 / max(1, count - 1)) for index in range(count)}
+    )
+    while len(offsets) < count:
+        offsets.append(next(day for day in range(7) if day not in offsets))
+        offsets.sort()
+    return offsets
 
 
 def plan_path(week_start: date | str) -> Path:
@@ -177,10 +244,14 @@ def _activity_date(activity: dict[str, Any]) -> date | None:
 
 def _profile_context() -> dict[str, Any]:
     profile = {
-        "objectif": "terminer un semi-marathon",
-        "distance_km": 21.1,
-        "frequence": "3 séances par semaine",
+        "objectif": "à définir avec le coureur",
+        "distance_km": None,
+        "frequence": None,
         "date_course": None,
+        "jours_disponibles": [],
+        "contraintes": "",
+        "douleur_ou_blessure": "",
+        "preferences": "",
     }
     try:
         payload = json.loads(PROFILE_FILE.read_text(encoding="utf-8"))
@@ -201,6 +272,10 @@ def _profile_context() -> dict[str, Any]:
     race_date = str(objective.get("raceDate") or "").strip()
     if race_date:
         profile["date_course"] = race_date
+    profile["jours_disponibles"] = objective.get("availableDays") or []
+    profile["contraintes"] = str(objective.get("constraints") or "").strip()
+    profile["douleur_ou_blessure"] = str(objective.get("injuryPain") or "").strip()
+    profile["preferences"] = str(objective.get("preferences") or "").strip()
     return profile
 
 
@@ -258,11 +333,6 @@ def session_statuses(
 def _context_for_week(week_start: date) -> dict[str, Any]:
     week_end = week_start + timedelta(days=6)
     next_start = week_start + timedelta(days=7)
-    proposed_dates = [
-        next_start + timedelta(days=1),
-        next_start + timedelta(days=3),
-        next_start + timedelta(days=6),
-    ]
     all_activities = load_activities()
     week_activities = [
         activity
@@ -272,10 +342,24 @@ def _context_for_week(week_start: date) -> dict[str, Any]:
     ]
     current_plan = load_plan(week_start)
     planned_sessions = current_plan.get("seances", []) if current_plan else []
+    profile = _profile_context()
+    frequency = profile.get("frequence")
+    try:
+        next_count = int(str(frequency).split()[0])
+    except (TypeError, ValueError, IndexError):
+        next_count = len(planned_sessions) if planned_sessions else 0
+    if not 1 <= next_count <= 7:
+        raise ValueError("La fréquence d'entraînement doit être définie entre 1 et 7.")
+    offsets = _session_offsets(next_count, profile.get("jours_disponibles"))
+    proposed_dates = [next_start + timedelta(days=day) for day in offsets]
     completed_count = session_statuses(planned_sessions, all_activities).count(
         "terminee"
     )
-    adherence = f"{completed_count}/3" if len(planned_sessions) == 3 else "non mesurable"
+    adherence = (
+        f"{completed_count}/{len(planned_sessions)}"
+        if planned_sessions
+        else "non mesurable"
+    )
     recent = [
         activity
         for activity in all_activities
@@ -288,7 +372,7 @@ def _context_for_week(week_start: date) -> dict[str, Any]:
         if item.get("role") in {"user", "assistant"}
     ]
     return {
-        "profil": _profile_context(),
+        "profil": profile,
         "semaine_evaluee": {
             "debut": week_start.isoformat(),
             "fin": week_end.isoformat(),
@@ -306,47 +390,116 @@ def _context_for_week(week_start: date) -> dict[str, Any]:
         "retours_conversation": conversation_feedback,
         "semaine_suivante": {
             "debut": next_start.isoformat(),
+            "nombre_exact_seances": next_count,
             "dates_obligatoires": [item.isoformat() for item in proposed_dates],
         },
         "limites": [
-            "Les jours préférés ne sont pas encore renseignés : mardi, jeudi et dimanche sont utilisés par défaut.",
+            "Les jours préférés ne sont pas encore renseignés : les séances sont réparties régulièrement.",
             "Aucune information subjective sur la fatigue ou la douleur n'est disponible.",
         ],
     }
 
 
 def generate_weekly_cycle(week_start: date, settings: Settings) -> WeeklyCycle:
-    if not settings.openai_api_key:
-        raise MissingOpenAIKeyError("OPENAI_API_KEY manque dans le fichier .env.")
+    if not settings.ai_api_key:
+        raise MissingOpenAIKeyError("Aucune clé API d'IA n'est configurée.")
     context = _context_for_week(week_start)
-    client = OpenAI(api_key=settings.openai_api_key)
-    response = client.responses.parse(
-        model=settings.openai_model,
-        reasoning={"effort": "low"},
+    cycle = structured_completion(
+        settings,
         instructions=WEEKLY_INSTRUCTIONS,
-        input=json.dumps(context, ensure_ascii=False, separators=(",", ":")),
-        text_format=WeeklyCycle,
+        payload=context,
+        result_type=WeeklyCycle,
+        reasoning_effort="low",
+        category="plan_hebdomadaire",
+        max_output_tokens=2600,
+        quality="balanced",
     )
-    if response.output_parsed is None:
-        raise RuntimeError("L'IA n'a pas produit de plan hebdomadaire structuré.")
-    cycle = response.output_parsed
     adherence = context["semaine_evaluee"]["adherence_calculee"]
     cycle.revue.adherence = adherence
     if adherence == "non mesurable":
-        prefix = "Aucun plan de trois séances n'existait : l'adhérence ne peut pas être mesurée. "
+        prefix = "Aucun plan n'existait : l'adhérence ne peut pas être mesurée. "
     else:
-        completed = int(adherence[0])
-        missing = 3 - completed
+        completed, total = (int(value) for value in adherence.split("/", 1))
+        missing = total - completed
         prefix = (
-            "Les trois séances planifiées ont été enregistrées. "
+            f"Les {total} séance(s) planifiée(s) ont été enregistrée(s). "
             if missing == 0
             else f"{missing} séance(s) planifiée(s) n'ont pas été enregistrée(s). "
         )
     cycle.revue.message_adherence = prefix + cycle.revue.message_adherence
     required_dates = context["semaine_suivante"]["dates_obligatoires"]
+    if len(cycle.seances_semaine_suivante) != len(required_dates):
+        raise RuntimeError("L'IA n'a pas respecté la fréquence confirmée.")
     for session, required_date in zip(cycle.seances_semaine_suivante, required_dates):
         session.date = required_date
     return cycle
+
+
+def generate_initial_plan(settings: Settings, onboarding: dict[str, Any]) -> Path:
+    """Crée un premier plan confirmé, sans supposer une semaine précédente."""
+    if not settings.ai_api_key:
+        raise MissingOpenAIKeyError("Aucune clé API d'IA n'est configurée.")
+    try:
+        stored = json.loads(PROFILE_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError("L'objectif doit être enregistré avant de créer le plan.") from exc
+    objective = stored.get("objective") if isinstance(stored, dict) else None
+    if not isinstance(objective, dict):
+        raise ValueError("L'objectif doit être enregistré avant de créer le plan.")
+    count = objective.get("sessionsPerWeek")
+    if not isinstance(count, int) or not 1 <= count <= 7:
+        raise ValueError("Le nombre de séances doit être compris entre 1 et 7.")
+
+    week_start = monday_of(date.today()) + timedelta(days=7)
+    offsets = _session_offsets(count, objective.get("availableDays"))
+    required_dates = [(week_start + timedelta(days=day)).isoformat() for day in offsets]
+    activities = load_activities()
+    payload = {
+        "objectif_confirme": objective,
+        "inventaire_garmin": onboarding.get("garmin_summary"),
+        "historique_recent": [_sanitized_metrics(item) for item in activities[-20:]],
+        "retours_conversation": [
+            {"role": item.get("role"), "content": item.get("content")}
+            for item in list_messages()[-30:]
+            if item.get("role") in {"user", "assistant"}
+        ],
+        "nombre_exact_seances": count,
+        "dates_obligatoires": required_dates,
+    }
+    plan = structured_completion(
+        settings,
+        instructions=INITIAL_PLAN_INSTRUCTIONS,
+        payload=payload,
+        result_type=InitialPlan,
+        reasoning_effort="low",
+        category="plan_initial",
+        max_output_tokens=2200,
+        quality="balanced",
+    )
+    if len(plan.seances) != count:
+        raise RuntimeError("L'IA n'a pas respecté le nombre de séances confirmé.")
+    for session, required_date in zip(plan.seances, required_dates):
+        session.date = required_date
+    ensure_directories()
+    target = plan_path(week_start)
+    target.write_text(
+        json.dumps(
+            {
+                "semaine": week_start.isoformat(),
+                "genere_le": datetime.now().isoformat(timespec="seconds"),
+                "onboarding": True,
+                "adaptation": plan.adaptation_objectif,
+                "synthese_historique": plan.synthese_historique,
+                "logique_existante": plan.logique_existante,
+                "seances": [item.model_dump(mode="json") for item in plan.seances],
+                "avertissement_securite": plan.avertissement_securite,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return target
 
 
 def save_weekly_cycle(evaluated_week: date, cycle: WeeklyCycle) -> Path:
@@ -378,7 +531,7 @@ def review_and_plan(evaluated_week: date, settings: Settings) -> Path:
 
 def maybe_review_and_plan(settings: Settings, today: date | None = None) -> Path | None:
     """Create the next plan once every session is completed or explicitly skipped."""
-    if not settings.openai_api_key:
+    if not settings.ai_api_key:
         return None
     current_week = monday_of(today or date.today())
     activities = load_activities()
@@ -387,7 +540,7 @@ def maybe_review_and_plan(settings: Settings, today: date | None = None) -> Path
         if not current_plan:
             continue
         sessions = current_plan.get("seances", [])
-        if not isinstance(sessions, list) or len(sessions) != 3:
+        if not isinstance(sessions, list) or not sessions:
             continue
         statuses = session_statuses(sessions, activities, today or date.today())
         if any(status == "a_venir" for status in statuses):

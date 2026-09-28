@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from garmin_coach.ai_analysis import (
     CourseAnalysis,
+    _compact_details_for_ai,
     _heart_rate_assessment,
     build_context,
     render_analysis_report,
@@ -80,6 +81,42 @@ def test_heart_rate_assessment_compares_time_with_planned_zones() -> None:
     assert assessment["temps_total_avec_zone_secondes"] == 2000
     assert assessment["part_dans_ensemble_des_zones_cibles_pct"] == 90.0
     assert assessment["repartition"][1]["pourcentage"] == 60.0
+
+
+def test_ai_details_are_compact_and_drop_nested_garmin_objects() -> None:
+    details = {
+        "samples": [
+            {
+                "sumElapsedDuration": index,
+                "sumDistance": index * 10,
+                "directSpeed": 3.1,
+                "directHeartRate": 140,
+                "irrelevantMetric": "x" * 100,
+            }
+            for index in range(72)
+        ],
+        "laps": [
+            {
+                "lapIndex": 1,
+                "distance": 1000,
+                "averageHR": 145,
+                "lengthDTOs": [{"raw": "x" * 10000}],
+            }
+        ],
+        "heart_rate_zones": [
+            {"zoneNumber": 2, "zoneLowBoundary": 120, "secsInZone": 900}
+        ],
+        "weather": {"temp": 18, "weatherTypeDTO": {"raw": "x" * 10000}},
+    }
+
+    compact = _compact_details_for_ai(details)
+    serialized = json.dumps(compact)
+
+    assert "irrelevantMetric" not in serialized
+    assert "lengthDTOs" not in serialized
+    assert "weatherTypeDTO" not in serialized
+    assert len(serialized) < 12_000
+    assert compact["series_temporelle"][0]["fc_bpm"] == 140
 
 
 

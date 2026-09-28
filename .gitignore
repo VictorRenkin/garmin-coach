@@ -18,7 +18,14 @@ htmlcov/
 .coverage
 build/
 dist/
+mobile-app/node_modules/
+mobile-app/.expo/
+mobile-app/dist-check/
 *.egg-info/
+.deck-build/
+backups/
+*.inspect.ndjson
+~$*.pptx
 
 # Outils et copies locales
 .vscode/

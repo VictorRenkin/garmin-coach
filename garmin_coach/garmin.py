@@ -1,11 +1,79 @@
 from __future__ import annotations
 
 import getpass
+import logging
 from collections.abc import Callable
 
-from garminconnect import Garmin
+from garminconnect import (
+    Garmin,
+    GarminConnectAuthenticationError,
+    GarminConnectConnectionError,
+    GarminConnectTooManyRequestsError,
+)
 
 from .config import Settings, TOKEN_DIR, ensure_directories
+
+
+class GarminMFARequiredError(ValueError):
+    """La connexion web ne peut pas encore reprendre le flux MFA Garmin."""
+
+
+def _exception_messages(exc: BaseException) -> str:
+    messages: list[str] = []
+    current: BaseException | None = exc
+    visited: set[int] = set()
+    while current is not None and id(current) not in visited:
+        visited.add(id(current))
+        messages.append(str(current).lower())
+        current = current.__cause__ or current.__context__
+    return " | ".join(messages)
+
+
+def _normalize_login_error(exc: GarminConnectConnectionError) -> None:
+    """Corrige les erreurs SSO que garminconnect classe parfois comme réseau."""
+    message = _exception_messages(exc)
+    # Certaines versions de garth encapsulent le statut HTTP dans le texte de
+    # l'erreur au lieu de l'exposer sur ``response.status_code``. Dans ce cas,
+    # garminconnect le transforme à tort en erreur réseau générique.
+    rate_limit_markers = (
+        "429 client error",
+        "status=429",
+        "too many requests",
+        "rate limit exceeded",
+    )
+    if any(marker in message for marker in rate_limit_markers):
+        raise GarminConnectTooManyRequestsError(
+            "Garmin bloque temporairement les nouvelles tentatives de connexion."
+        ) from exc
+    if "validation en deux étapes garmin" in message:
+        raise GarminMFARequiredError(
+            "La validation en deux étapes Garmin doit être confirmée."
+        ) from exc
+    authentication_markers = (
+        "unauthorized",
+        "authentication failed",
+        "invalid credentials",
+        "incorrect password",
+        "unexpected title: garmin: sign in",
+        "unexpected title: garmin | sign in",
+        "unexpected title: sign in",
+        "unexpected title: signin",
+        "unexpected title: login",
+    )
+    if any(marker in message for marker in authentication_markers):
+        raise GarminConnectAuthenticationError("Authentication failed") from exc
+    raise exc
+
+
+def _quiet_login(client: Garmin, token_dir: str | None = None) -> None:
+    """Empêche la bibliothèque Garmin d'imprimer une trace complète à l'écran."""
+    logger = logging.getLogger("garminconnect")
+    previous_disabled = logger.disabled
+    logger.disabled = True
+    try:
+        client.login(token_dir) if token_dir else client.login()
+    finally:
+        logger.disabled = previous_disabled
 
 
 def connect(
@@ -22,7 +90,7 @@ def connect(
     # Les deux fichiers sont requis pour considérer la session comme complète.
     if oauth1_token.is_file() and oauth2_token.is_file():
         client = Garmin()
-        client.login(str(TOKEN_DIR))
+        _quiet_login(client, str(TOKEN_DIR))
         return client
 
     email = settings.email or input_fn("Adresse e-mail Garmin Connect : ").strip()
@@ -35,6 +103,38 @@ def connect(
 
     client = Garmin(email, password, prompt_mfa=ask_mfa)
     # Première connexion sans tokenstore, puis sauvegarde de la session réussie.
-    client.login()
+    _quiet_login(client)
     client.garth.dump(str(TOKEN_DIR))
+    return client
+
+
+def authenticate_with_credentials(
+    email: str, password: str, mfa_code: str | None = None
+) -> Garmin:
+    """Authentifie Garmin sans encore écrire de jetons sur disque."""
+    def require_mfa() -> str:
+        if mfa_code and mfa_code.strip():
+            return mfa_code.strip()
+        raise GarminMFARequiredError(
+            "La validation en deux étapes Garmin doit être confirmée."
+        )
+
+    client = Garmin(email, password, prompt_mfa=require_mfa)
+    try:
+        _quiet_login(client)
+    except GarminConnectConnectionError as exc:
+        _normalize_login_error(exc)
+    return client
+
+
+def persist_client_tokens(client: Garmin) -> None:
+    """Enregistre les jetons dans l'espace utilisateur déjà authentifié."""
+    ensure_directories()
+    client.garth.dump(str(TOKEN_DIR))
+
+
+def connect_with_credentials(email: str, password: str) -> Garmin:
+    """Compatibilité CLI : authentifie puis persiste dans le contexte actif."""
+    client = authenticate_with_credentials(email, password)
+    persist_client_tokens(client)
     return client

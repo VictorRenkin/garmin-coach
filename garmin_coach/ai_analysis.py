@@ -4,11 +4,11 @@ import json
 from pathlib import Path
 from typing import Any, Literal
 
-from openai import OpenAI
 from pydantic import BaseModel, Field
 
+from .ai_provider import structured_completion
 from .activity_data import public_detail
-from .config import ANALYSES_DIR, REPORTS_DIR, Settings, ensure_directories
+from .config import ANALYSES_DIR, PROFILE_FILE, REPORTS_DIR, Settings, ensure_directories
 
 
 class MissingOpenAIKeyError(RuntimeError):
@@ -32,9 +32,9 @@ class CourseAnalysis(BaseModel):
 
 
 COACH_INSTRUCTIONS = """
-Tu es un coach de course à pied prudent qui prépare un coureur amateur à un
-semi-marathon avec trois séances par semaine. Tu analyses une course terminée à
-partir de mesures Garmin et d'un historique sportif anonymisé.
+Tu es un coach de course à pied prudent. Tu analyses une course terminée selon
+l'objectif et la fréquence réellement confirmés par le coureur, à partir de
+mesures Garmin et d'un historique sportif anonymisé.
 
 Règles obligatoires :
 - Réponds en français, très brièvement, avec des faits utiles uniquement.
@@ -42,6 +42,13 @@ Règles obligatoires :
   respectées, puis un ou deux points réussis et un ou deux axes de progression.
 - Évite introduction, répétition, encouragement générique et longue explication.
 - N'invente aucune donnée, sensation, blessure, fatigue ou intention de séance.
+- Ne présume jamais que la fréquence cardiaque maximale ou les zones Garmin de
+  cet utilisateur sont fiables ou erronées. Utilise uniquement les éléments de
+  son contexte. Si leur calibration n'est pas établie, présente les zones comme
+  indicatives et ne demande pas de marcher dans le seul but de rester en zone 2.
+- Analyse principalement la relation entre vitesse en km/h et fréquence
+  cardiaque mesurée, puis la régularité, le relief et l'historique comparable.
+  Le ressenti peut compléter l'analyse mais ne doit pas en être la base.
 - Si aucune séance planifiée n'est fournie, respect_objectif doit être
   « indéterminable ». Évalue alors seulement la cohérence et la tendance.
 - Commence toujours par rappeler le type et l'objectif de la séance planifiée,
@@ -69,8 +76,8 @@ Règles obligatoires :
 - Distingue clairement les faits mesurés des interprétations.
 - Ne recommande jamais de courir malgré une douleur et ne remplace pas un avis
   médical. Signale les limites importantes des données.
-- Le conseil de prochaine séance doit rester prudent et compatible avec trois
-  entraînements par semaine. Ne modifie pas encore un plan complet.
+- Le conseil de prochaine séance doit rester prudent et compatible avec la
+  fréquence confirmée. Ne modifie pas encore un plan complet.
 """.strip()
 
 
@@ -163,6 +170,100 @@ def _heart_rate_assessment(
         ),
     }
 
+
+def _compact_details_for_ai(details: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Garde les preuves sportives utiles sans envoyer les objets Garmin bruts."""
+    if not details:
+        return None
+
+    sample_fields = {
+        "temps_s": (
+            "sumElapsedDuration",
+            "sumMovingDuration",
+            "sumDuration",
+            "directElapsedDuration",
+        ),
+        "distance_m": ("sumDistance", "directDistance"),
+        "vitesse_m_s": ("directSpeed", "enhancedSpeed"),
+        "fc_bpm": ("directHeartRate", "heartRate"),
+        "cadence": ("directRunCadence", "directDoubleCadence"),
+        "altitude_m": (
+            "directCorrectedElevation",
+            "directElevation",
+            "directUncorrectedElevation",
+        ),
+        "puissance_w": ("directPower",),
+    }
+    series: list[dict[str, float]] = []
+    for raw in details.get("samples", []):
+        if not isinstance(raw, dict):
+            continue
+        point: dict[str, float] = {}
+        for label, candidates in sample_fields.items():
+            value = next(
+                (
+                    raw.get(candidate)
+                    for candidate in candidates
+                    if isinstance(raw.get(candidate), (int, float))
+                ),
+                None,
+            )
+            if value is not None:
+                point[label] = round(float(value), 2)
+        if point:
+            series.append(point)
+
+    lap_fields = (
+        "lapIndex",
+        "distance",
+        "movingDuration",
+        "elapsedDuration",
+        "averageSpeed",
+        "maxSpeed",
+        "elevationGain",
+        "averageHR",
+        "maxHR",
+        "averageRunCadence",
+        "maxRunCadence",
+        "strideLength",
+    )
+    laps = [
+        {key: lap.get(key) for key in lap_fields if lap.get(key) is not None}
+        for lap in details.get("laps", [])
+        if isinstance(lap, dict)
+    ][:80]
+    zones = [
+        {
+            key: zone.get(key)
+            for key in ("zoneNumber", "zoneLowBoundary", "secsInZone")
+            if zone.get(key) is not None
+        }
+        for zone in details.get("heart_rate_zones", [])
+        if isinstance(zone, dict)
+    ][:5]
+    weather = details.get("weather")
+    compact_weather = (
+        {
+            key: weather.get(key)
+            for key in (
+                "temp",
+                "apparentTemp",
+                "relativeHumidity",
+                "windSpeed",
+                "windGust",
+            )
+            if weather.get(key) is not None
+        }
+        if isinstance(weather, dict)
+        else {}
+    )
+    return {
+        "series_temporelle": series,
+        "tours": laps,
+        "zones_cardiaques": zones,
+        "meteo": compact_weather or None,
+    }
+
 def build_context(
     activity: dict[str, Any],
     history: list[dict[str, Any]],
@@ -171,17 +272,30 @@ def build_context(
     current_id = str(activity.get("activityId", ""))
     previous = [item for item in history if str(item.get("activityId", "")) != current_id]
     previous.sort(key=lambda item: str(item.get("startTimeLocal") or ""))
-    details = public_detail(current_id, max_points=500)
+    details = public_detail(current_id, max_points=72)
+    profile = {
+        "objectif": "à définir avec le coureur",
+        "distance_objectif_km": None,
+        "seances_par_semaine": None,
+    }
+    try:
+        stored = json.loads(PROFILE_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        stored = {}
+    objective = stored.get("objective") if isinstance(stored, dict) else None
+    if isinstance(objective, dict):
+        profile = {
+            "objectif": objective.get("title") or profile["objectif"],
+            "distance_objectif_km": objective.get("distanceKm"),
+            "seances_par_semaine": objective.get("sessionsPerWeek"),
+            "date_objectif": objective.get("raceDate"),
+        }
     return {
-        "profil": {
-            "objectif": "terminer un semi-marathon",
-            "distance_objectif_km": 21.1,
-            "seances_par_semaine": 3,
-        },
+        "profil": profile,
         "seance_planifiee": planned_session,
         "course_a_analyser": _sanitized_metrics(activity),
         "historique_recent": [_sanitized_metrics(item) for item in previous[-8:]],
-        "details_course": details,
+        "details_course": _compact_details_for_ai(details),
         "evaluation_frequence_cardiaque": _heart_rate_assessment(
             details, planned_session
         ),
@@ -198,25 +312,20 @@ def analyze_activity(
     settings: Settings,
     planned_session: dict[str, Any] | None = None,
 ) -> CourseAnalysis:
-    if not settings.openai_api_key:
+    if not settings.ai_api_key:
         raise MissingOpenAIKeyError(
-            "OPENAI_API_KEY manque dans le fichier .env."
+            "Aucune clé API d'IA n'est configurée dans le fichier .env."
         )
-    client = OpenAI(api_key=settings.openai_api_key)
-    response = client.responses.parse(
-        model=settings.openai_model,
-        reasoning={"effort": "low"},
+    return structured_completion(
+        settings,
         instructions=COACH_INSTRUCTIONS,
-        input=json.dumps(
-            build_context(activity, history, planned_session),
-            ensure_ascii=False,
-            separators=(",", ":"),
-        ),
-        text_format=CourseAnalysis,
+        payload=build_context(activity, history, planned_session),
+        result_type=CourseAnalysis,
+        reasoning_effort="low",
+        category="analyse_activite",
+        max_output_tokens=900,
+        quality="economy",
     )
-    if response.output_parsed is None:
-        raise RuntimeError("L'IA n'a pas produit d'analyse structurée.")
-    return response.output_parsed
 
 
 def analysis_path(activity_id: str | int) -> Path:

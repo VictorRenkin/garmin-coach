@@ -8,6 +8,7 @@ import pytest
 
 from garmin_coach import dashboard
 from garmin_coach import coach_chat
+from garmin_coach import user_accounts
 from garmin_coach.config import Settings
 
 
@@ -69,6 +70,33 @@ def test_save_objective_persists_validated_profile(tmp_path: Path, monkeypatch) 
 
     assert objective["distanceKm"] == 10
     assert dashboard.load_objective() == objective
+
+
+def test_save_objective_accepts_coaching_goal_without_race_distance(
+    tmp_path: Path, monkeypatch
+) -> None:
+    profile = tmp_path / "profile.json"
+    monkeypatch.setattr(dashboard, "PROFILE_FILE", profile)
+    monkeypatch.setattr(dashboard, "ensure_directories", lambda: None)
+
+    objective = dashboard.save_objective(
+        {
+            "goalType": "wellbeing",
+            "title": "Retrouver une routine durable",
+            "distanceKm": None,
+            "sessionsPerWeek": 3,
+            "raceDate": None,
+            "availableDays": ["tue", "thu", "sun"],
+            "constraints": "Travail tard le mercredi.",
+            "injuryPain": "Aucune douleur actuelle.",
+            "preferences": "Natation le samedi si la fatigue est basse.",
+        }
+    )
+
+    assert objective["distanceKm"] is None
+    assert objective["availableDays"] == ["tue", "thu", "sun"]
+    assert objective["constraints"] == "Travail tard le mercredi."
+    assert objective["preferences"].startswith("Natation")
 
 
 def test_coach_objective_update_preserves_unspecified_fields(
@@ -152,29 +180,17 @@ def test_dashboard_history_starts_with_five_courses() -> None:
     assert 'id="historyToggle"' in html
     assert "historyExpanded" in html
 
-def test_manual_analysis_request_is_not_duplicated(monkeypatch) -> None:
-    sent: list[str] = []
-    monkeypatch.setattr(
-        dashboard,
-        "list_messages",
-        lambda: [
-            {
-                "role": "user",
-                "content": "Analyse la séance Garmin 42 après mon actualisation.",
-                "status": "pending",
-            }
-        ],
-    )
-    monkeypatch.setattr(dashboard, "submit_message", sent.append)
+def test_refresh_selects_latest_activity() -> None:
+    html = dashboard.TEMPLATE_FILE.read_text(encoding="utf-8")
 
-    assert dashboard.request_manual_analysis("42") is False
-    assert sent == []
+    assert "loadAll({selectLatest=false}={})" in html
+    assert "loadAll({selectLatest:true})" in html
 
 
 def test_dashboard_uses_manual_refresh_and_separate_time_charts() -> None:
     html = dashboard.TEMPLATE_FILE.read_text(encoding="utf-8")
 
-    assert "Actualiser et analyser" in html
+    assert "Mettre à jour mes activités" in html
     assert "setInterval(" not in html
     assert 'id="syncBtn"' not in html
     assert 'id="paceChart"' in html
@@ -211,7 +227,6 @@ def test_dashboard_startup_does_not_sync_or_request_ai(monkeypatch) -> None:
 
     monkeypatch.setattr(dashboard, "ThreadingHTTPServer", FakeServer)
     monkeypatch.setattr(dashboard, "sync_once", forbidden)
-    monkeypatch.setattr(dashboard, "request_manual_analysis", forbidden)
     monkeypatch.setattr(dashboard.threading, "Timer", forbidden)
     monkeypatch.setattr("sys.argv", ["dashboard", "--no-browser"])
 
@@ -248,7 +263,7 @@ def test_dashboard_history_is_clickable_and_loads_full_activity_detail() -> None
     assert "row.addEventListener('click'" in html
     assert "row.addEventListener('keydown'" in html
     assert "/details`" in html
-    assert "renderCharts();renderZones();renderLaps();renderAnalysis(a)" in html
+    assert "renderCharts();renderZones();renderLaps();renderMessages()" in html
     assert "a.analysis?'Disponible':'En attente'" in html
 
 
@@ -281,23 +296,31 @@ def test_dashboard_chat_supports_confirmable_actions_and_waiting_state() -> None
     html = dashboard.TEMPLATE_FILE.read_text(encoding="utf-8")
 
     assert "/api/coach/action" in html
-    assert "Confirmer le nouvel objectif" in html
-    assert "Confirmer le déplacement" in html
-    assert "L’assistant réfléchit…" in html
+    assert "Accepter l’objectif" in html
+    assert "markCoachAlertSeen" in html
+    assert "IntersectionObserver" in html
+    assert "Accepter le déplacement" in html
+    assert "Accepter la continuité" in html
+    assert "Préparer la proposition" in html
+    assert "Refuser" in html
+    assert "/api/coach/action-reject" in html
+    assert "Créer et envoyer le plan Garmin" not in html
+    assert 'aria-label="Motionest écrit une réponse"' in html
     assert 'id="chatSend"' in html
     assert "event.key==='Enter'&&!event.shiftKey" in html
     assert "requestSubmit()" in html
-    assert "AbortController" in html
+    assert "AbortController" not in html
+    assert "coach_acceptance_followup" in dashboard.coach_acceptance_followup.__name__
     assert "dataset.distance" in html
-    assert 'id="coachMode"' in html
-    assert 'id="coachConfigDialog"' in html
+    assert 'id="coachLevel"' in html
+    assert 'id="coachConfigDialog"' not in html
     assert "/api/coach/status" in html
-    assert "/api/coach/config" in html
-    assert "Connecte l’assistant pour commencer une vraie conversation" in html
+    assert "/api/coach/config" not in html
+    assert "Pose ta question à Motionest" in html
     assert "width:min(100%,900px);margin-inline:auto" in html
 
 
-def test_chat_http_endpoint_requires_ai_instead_of_automatic_answer(tmp_path, monkeypatch) -> None:
+def test_chat_http_endpoint_queues_ai_response(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(coach_chat, "MESSAGES_FILE", tmp_path / "messages.json")
     monkeypatch.setattr(coach_chat, "COACH_DRAFTS_DIR", tmp_path / "drafts")
     monkeypatch.setattr(coach_chat, "ensure_directories", lambda: None)
@@ -309,23 +332,28 @@ def test_chat_http_endpoint_requires_ai_instead_of_automatic_answer(tmp_path, mo
         "coach_context",
         lambda: {"objectif": {"title": "Terminer un semi-marathon"}},
     )
+    queued = []
+    monkeypatch.setattr(
+        dashboard,
+        "queue_coach_response",
+        lambda user_id, request_id: queued.append((user_id, request_id)),
+    )
     server = dashboard.ThreadingHTTPServer(("127.0.0.1", 0), dashboard.DashboardHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
+        cookie = f"motionest_session={user_accounts.create_session('u_test_chat')}"
         request = urllib.request.Request(
             f"http://127.0.0.1:{server.server_port}/api/coach/messages",
             data=json.dumps({"message": "Bonjour"}).encode(),
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", "Cookie": cookie},
             method="POST",
         )
-        with pytest.raises(urllib.error.HTTPError) as error:
-            urllib.request.urlopen(request, timeout=3)
-        assert error.value.code == 503
-        payload = json.loads(error.value.read())
-        assert "réponses automatiques est désactivé" in payload["message"]
-        assert coach_chat.list_messages()[0]["status"] == "failed"
-        assert coach_chat.pending_requests() == []
+        with urllib.request.urlopen(request, timeout=3) as response:
+            assert response.status == 202
+            payload = json.loads(response.read())
+        assert payload["request"]["status"] == "pending"
+        assert queued == [("u_test_chat", payload["request"]["id"])]
     finally:
         server.shutdown()
         server.server_close()
@@ -347,8 +375,13 @@ def test_coach_status_and_config_http_endpoints_do_not_return_key(monkeypatch) -
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
+        cookie = f"motionest_session={user_accounts.create_session('u_test_status')}"
         with urllib.request.urlopen(
-            f"http://127.0.0.1:{server.server_port}/api/coach/status", timeout=3
+            urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/coach/status",
+                headers={"Cookie": cookie},
+            ),
+            timeout=3,
         ) as response:
             status_payload = json.loads(response.read())
         assert status_payload == {"configured": False, "model": None}
@@ -360,14 +393,9 @@ def test_coach_status_and_config_http_endpoints_do_not_return_key(monkeypatch) -
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(request, timeout=3) as response:
-            config_payload = json.loads(response.read())
-        assert config_payload == {
-            "ok": True,
-            "configured": True,
-            "model": "test-model",
-        }
-        assert secret not in json.dumps(config_payload)
+        with pytest.raises(urllib.error.HTTPError) as denied:
+            urllib.request.urlopen(request, timeout=3)
+        assert denied.value.code == 401
     finally:
         server.shutdown()
         server.server_close()
@@ -412,7 +440,8 @@ def test_adapt_plan_changes_future_sessions(
     assert session["duree_estimee_minutes"] == duration
     assert session["distance_estimee_km"] == distance
     assert session["type"] == session_type
-    assert "garmin" not in session
+    # L'identifiant reste disponible jusqu'au remplacement effectif dans Garmin.
+    assert session["garmin"]["workout_id"] == 42
     assert "confirmation dans le chat" in result["plan"]["adaptation"]
 
 
@@ -436,6 +465,7 @@ def test_profile_http_endpoint_does_not_invoke_chat(tmp_path, monkeypatch) -> No
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
+        cookie = f"motionest_session={user_accounts.create_session('u_test_profile')}"
         request = urllib.request.Request(
             f"http://127.0.0.1:{server.server_port}/api/profile",
             data=json.dumps(
@@ -446,7 +476,7 @@ def test_profile_http_endpoint_does_not_invoke_chat(tmp_path, monkeypatch) -> No
                     "raceDate": None,
                 }
             ).encode(),
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", "Cookie": cookie},
             method="POST",
         )
         with urllib.request.urlopen(request, timeout=3) as response:

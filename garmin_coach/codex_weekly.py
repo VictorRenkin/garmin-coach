@@ -42,7 +42,7 @@ def _close_expired_plan(week_start: date, current_day: date) -> list[str]:
     except (OSError, json.JSONDecodeError):
         return []
     sessions = payload.get("seances", [])
-    if not isinstance(sessions, list) or len(sessions) != 3:
+    if not isinstance(sessions, list) or not sessions:
         return []
     statuses = session_statuses(sessions, load_activities(), current_day)
     changed = False
@@ -64,9 +64,9 @@ def weekly_context(today: date | None = None) -> dict[str, Any]:
     if evaluated_week is None:
         future_plan = PLANS_DIR / f"{(monday_of(current_day) + timedelta(days=7)).isoformat()}.json"
         reason = (
-            "Le prochain plan est déjà programmé ; le bilan attend ses trois séances."
+            "Le prochain plan est déjà programmé ; le bilan attend ses séances."
             if future_plan.is_file()
-            else "Aucun plan actif de trois séances n'est encore disponible."
+            else "Aucun plan actif n'est encore disponible."
         )
         return {"due": False, "reason": reason}
     next_plan = PLANS_DIR / f"{(evaluated_week + timedelta(days=7)).isoformat()}.json"
@@ -75,11 +75,17 @@ def weekly_context(today: date | None = None) -> dict[str, Any]:
     statuses = _close_expired_plan(evaluated_week, current_day)
     context = _context_for_week(evaluated_week)
     adherence = context["semaine_evaluee"]["adherence_calculee"]
-    cycle_closed = len(statuses) == 3 and "a_venir" not in statuses
-    if adherence != "3/3" and not cycle_closed:
+    completed_from_adherence = False
+    total = 0
+    if adherence != "non mesurable":
+        completed, total = (int(value) for value in adherence.split("/", 1))
+        completed_from_adherence = total > 0 and completed == total
+    cycle_closed = (bool(statuses) and "a_venir" not in statuses) or completed_from_adherence
+    if not cycle_closed:
+        session_label = "trois séances" if total == 3 else f"{total} séances"
         return {
             "due": False,
-            "reason": f"Le bilan attend la fin des trois séances ({adherence} terminées).",
+            "reason": f"Le bilan attend la fin des {session_label} ({adherence} terminées).",
         }
     return {
         "due": True,
@@ -100,17 +106,19 @@ def save_codex_weekly_cycle(evaluated_week: date, source: Path) -> Path:
     adherence = context["semaine_evaluee"]["adherence_calculee"]
     cycle.revue.adherence = adherence
     if adherence == "non mesurable":
-        prefix = "Aucun plan de trois séances n'existait : l'adhérence ne peut pas être mesurée. "
+        prefix = "Aucun plan n'existait : l'adhérence ne peut pas être mesurée. "
     else:
-        completed = int(adherence[0])
-        missing = 3 - completed
+        completed, total = (int(value) for value in adherence.split("/", 1))
+        missing = total - completed
         prefix = (
-            "Les trois séances planifiées ont été enregistrées. "
+            f"Les {total} séance(s) planifiée(s) ont été enregistrée(s). "
             if missing == 0
             else f"{missing} séance(s) planifiée(s) n'ont pas été enregistrée(s). "
         )
     cycle.revue.message_adherence = prefix + cycle.revue.message_adherence
     required_dates = context["semaine_suivante"]["dates_obligatoires"]
+    if len(cycle.seances_semaine_suivante) != len(required_dates):
+        raise ValueError("Le plan ne respecte pas la fréquence confirmée.")
     for session, required_date in zip(cycle.seances_semaine_suivante, required_dates):
         session.date = required_date
     return save_weekly_cycle(evaluated_week, cycle)
@@ -119,7 +127,7 @@ def save_codex_weekly_cycle(evaluated_week: date, source: Path) -> Path:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Cycle hebdomadaire créé par Codex")
     subparsers = parser.add_subparsers(dest="command", required=True)
-    subparsers.add_parser("context", help="Afficher le bilan après trois séances terminées")
+    subparsers.add_parser("context", help="Afficher le bilan après les séances terminées")
     save = subparsers.add_parser("save", help="Valider et sauvegarder le nouveau plan")
     save.add_argument("--week-start", required=True)
     save.add_argument("--input", required=True, type=Path)

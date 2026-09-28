@@ -6,6 +6,60 @@ from garmin_coach import coach_chat
 from garmin_coach.config import Settings
 
 
+def test_exact_current_plan_question_is_grounded_without_api() -> None:
+    result = coach_chat.generate_response(
+        {"content": "Quelle seance est actuellement enregistree jeudi dans mon plan actif ?"},
+        Settings(None, None, 300, None, "unused"),
+        {
+            "plan_actif": {
+                "seances": [
+                    {
+                        "date": "2026-08-06",
+                        "titre": "Endurance reguliere",
+                        "type": "endurance facile",
+                        "duree_estimee_minutes": 35,
+                        "distance_estimee_km": 4.0,
+                        "consigne_intensite": "Rester regulier.",
+                    }
+                ]
+            },
+            "conversation_recente": [
+                {"role": "assistant", "content": "Intervalles 10 km jeudi"}
+            ],
+        },
+    )
+
+    assert "Endurance reguliere" in result.message
+    assert "Intervalles" not in result.message
+    assert result.action == "none"
+
+
+def test_modify_session_requires_a_structured_patch() -> None:
+    response = coach_chat.CoachResponse(
+        message="Proposition concrete.",
+        action="modify_session",
+        session_index=1,
+        session_patch={"titre": "Intervalles courts", "type": "intervalles"},
+    )
+    assert response.session_patch is not None
+    assert response.session_patch.type == "intervalles"
+
+
+def test_explicit_reschedule_is_confirmable_without_ai() -> None:
+    result = coach_chat.generate_response(
+        {"content": "Deplace la seance 1 au 2026-08-10"},
+        Settings(None, None, 300, None, "unused"),
+        {
+            "plan_actif": {
+                "seances": [{"date": "2026-08-06", "titre": "Endurance"}]
+            }
+        },
+    )
+    assert result.action == "reschedule_session"
+    assert result.session_index == 0
+    assert result.new_date == "2026-08-10"
+
+
 def test_message_round_trip(tmp_path, monkeypatch) -> None:
     messages = tmp_path / "messages.json"
     drafts = tmp_path / "drafts"
@@ -72,6 +126,23 @@ def test_generate_response_sends_context_and_uses_structured_output(monkeypatch)
     assert payload["demande"] == "Je veux quatre séances"
     assert payload["contexte"]["objectif"]["sessionsPerWeek"] == 3
     assert captured["text_format"] is coach_chat.CoachResponse
+
+
+def test_delete_sessions_action_keeps_all_selected_indexes() -> None:
+    response = coach_chat.CoachResponse(
+        message="Je retire les autres séances après ton clic.",
+        action="delete_sessions",
+        session_indexes=[0, 1, 3, 4],
+    )
+
+    assert response.session_indexes == [0, 1, 3, 4]
+
+
+def test_delete_sessions_action_requires_at_least_one_index() -> None:
+    with pytest.raises(ValueError, match="séance à retirer"):
+        coach_chat.CoachResponse(
+            message="Je retire les séances.", action="delete_sessions"
+        )
 
 
 def test_chat_requires_ai_connection_instead_of_automatic_reply() -> None:

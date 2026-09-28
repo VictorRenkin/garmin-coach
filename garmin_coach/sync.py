@@ -16,13 +16,17 @@ def _report_path(activity: dict[str, Any]) -> Path:
 
 
 def sync_once(
-    client: Any, *, bootstrap: bool = False, settings: Settings | None = None
+    client: Any,
+    *,
+    bootstrap: bool = False,
+    settings: Settings | None = None,
+    limit: int = 20,
 ) -> list[Path]:
     """Récupère les activités récentes et crée les nouveaux bilans de course."""
     del settings  # La synchronisation interne reste strictement sans IA.
     ensure_directories()
     seen = load_seen_ids()
-    activities = client.get_activities(0, 20)
+    activities = client.get_activities(0, max(1, limit))
     running = [activity for activity in activities if is_running(activity)]
 
     # Au premier lancement, on mémorise l'historique sans produire 20 alertes.

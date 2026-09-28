@@ -1,0 +1,13 @@
+{
+  "expo": {
+    "name": "Garmin Coach",
+    "slug": "garmin-coach-mobile",
+    "scheme": "garmincoach",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "android": { "package": "be.garmincoach.mobile", "usesCleartextTraffic": true },
+    "ios": { "bundleIdentifier": "be.garmincoach.mobile", "supportsTablet": true, "infoPlist": { "NSAppTransportSecurity": { "NSAllowsLocalNetworking": true } } },
+    "plugins": ["expo-router"]
+  }
+}

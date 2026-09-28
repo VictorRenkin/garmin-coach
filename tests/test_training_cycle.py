@@ -7,6 +7,11 @@ def test_monday_of_week() -> None:
     assert training_cycle.monday_of(date(2026, 7, 22)) == date(2026, 7, 20)
 
 
+def test_session_offsets_respect_declared_available_days() -> None:
+    assert training_cycle._session_offsets(3, ["tue", "thu", "sun"]) == [1, 3, 6]
+    assert training_cycle._session_offsets(2, ["mon", "wed", "fri", "sun"]) == [0, 6]
+
+
 def test_planned_session_is_matched_by_date(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(training_cycle, "PLANS_DIR", tmp_path)
     (tmp_path / "2026-07-20.json").write_text(

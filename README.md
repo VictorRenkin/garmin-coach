@@ -59,11 +59,11 @@ L’adresse, le mot de passe et l’éventuel code de vérification sont demand�
 
 Le navigateur s’ouvre sur [http://127.0.0.1:8765](http://127.0.0.1:8765). Clique sur **Actualiser et analyser** pour importer tes courses.
 
-À ce stade, le suivi, les statistiques et les actions Garmin fonctionnent déjà sans OpenAI.
+À ce stade, le suivi, les statistiques et les actions Garmin fonctionnent déjà sans clé API.
 
 ## Ce qui fonctionne selon ta configuration
 
-| Fonction | Sans API OpenAI | Avec API OpenAI |
+| Fonction | Sans clé API | Avec une API compatible |
 | --- | :---: | :---: |
 | Importer et consulter les courses Garmin | ✓ | ✓ |
 | Afficher les graphiques, zones et tours | ✓ | ✓ |
@@ -71,17 +71,17 @@ Le navigateur s’ouvre sur [http://127.0.0.1:8765](http://127.0.0.1:8765). Cliq
 | Discuter avec le coach dans le tableau de bord | — | ✓ |
 | Demander une adaptation en langage naturel | — | ✓ |
 
-Sans API, tu peux également ouvrir le projet dans Codex et discuter avec l’assistant depuis l’application Codex. Pour utiliser le coach directement dans le tableau de bord, il faut une clé API OpenAI. L’API est facultative, payante à l’usage et facturée séparément d’un abonnement ChatGPT ou Codex.
+Sans API, tu peux garder ce projet ouvert dans la même tâche Codex. Le bouton **Actualiser et analyser** importe la dernière course et dépose une seule demande pour Codex ; l’analyse validée revient ensuite dans la même page du tableau de bord. Une clé API sert au chat direct, aux analyses automatiques et aux plans. Codex reste disponible séparément et n’est jamais désactivé par le choix du fournisseur.
 
-### Activer le coach dans le tableau de bord
+### Activer le coach avec le fournisseur de ton choix
 
-Crée une clé depuis [OpenAI Platform](https://platform.openai.com/api-keys), puis lance :
+Depuis le tableau de bord, choisis OpenAI, NVIDIA NIM, Groq, OpenRouter, GitHub Models, Gemini ou une autre API compatible OpenAI. Tu peux aussi lancer :
 
 ```powershell
 .\configurer-ia.cmd
 ```
 
-La clé est stockée dans le fichier local `.env`, ignoré par Git. Ne publie jamais ce fichier et n’enregistre jamais tes identifiants ou ton mot de passe ChatGPT dans l’application. Ensuite, utilise simplement **Actualiser et analyser** dans l’interface.
+La clé, le modèle et l’URL sont stockés dans le fichier local `.env`, ignoré par Git. Ne publie jamais ce fichier. Le fournisseur peut être changé sans modifier le code et le pont Codex continue de fonctionner.
 
 ## Ce que tu retrouves dans le tableau de bord
 
@@ -118,6 +118,21 @@ La clé est stockée dans le fichier local `.env`, ignoré par Git. Ne publie ja
 ```
 
 ## Limites actuelles
+
+### Utiliser ses activités Strava sans envoi vers une montre
+
+Télécharge ton archive personnelle depuis Strava, puis glisse le fichier ZIP sur
+`importer-strava.cmd`. Tu peux aussi utiliser les commandes suivantes :
+
+```powershell
+.\.venv\Scripts\python.exe -m garmin_coach.cli import-strava "C:\chemin\export_strava.zip"
+.\.venv\Scripts\python.exe -m garmin_coach.cli analyze --all
+.\.venv\Scripts\python.exe -m garmin_coach.cli weekly --local
+```
+
+Les courses rejoignent le même historique et le plan reste visible localement.
+L'import passe par l'export appartenant à l'utilisateur, pas par l'API Strava, et
+aucune séance n'est envoyée vers une montre.
 
 - Le projet cible aujourd’hui Windows et la course à pied.
 - La montre doit avoir synchronisé l’activité avec Garmin Connect avant l’import.

@@ -233,14 +233,19 @@ def _calendar_entries(client: Any, year: int, month: int) -> list[dict[str, Any]
 
 
 def remove_future_sessions(
-    client: Any, target: Path, today: date | None = None
+    client: Any,
+    target: Path,
+    today: date | None = None,
+    session_indexes: set[int] | None = None,
 ) -> int:
     """Retire du calendrier et de la bibliothèque les séances encore futures."""
     payload = json.loads(target.read_text(encoding="utf-8"))
     current_day = today or date.today()
     sessions = [item for item in payload.get("seances", []) if isinstance(item, dict)]
     future = []
-    for session in sessions:
+    for index, session in enumerate(sessions):
+        if session_indexes is not None and index not in session_indexes:
+            continue
         try:
             session_day = date.fromisoformat(str(session.get("date")))
         except ValueError:
@@ -298,8 +303,8 @@ def apply_plan_revision(
     except (OSError, json.JSONDecodeError) as exc:
         raise ValueError("Le plan de remplacement n'est pas un JSON valide.") from exc
     sessions = revised.get("seances") if isinstance(revised, dict) else None
-    if not isinstance(sessions, list) or len(sessions) != 3:
-        raise ValueError("Le plan de remplacement doit contenir exactement 3 séances.")
+    if not isinstance(sessions, list) or not 1 <= len(sessions) <= 7:
+        raise ValueError("Le plan de remplacement doit contenir entre 1 et 7 séances.")
     current_day = today or date.today()
     dates: set[str] = set()
     for raw_session in sessions:

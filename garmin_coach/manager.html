@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Motionest Manager</title>
+  <style>
+    :root{--lime:#c9f457;--ink:#07110f;--panel:#0c1a17;--line:#29453a;--muted:#9bada6}
+    *{box-sizing:border-box}body{margin:0;background:var(--ink);color:#f4f7f4;font:14px Inter,Segoe UI,sans-serif}
+    .shell{width:min(1180px,calc(100% - 32px));margin:auto;padding:28px 0}
+    header{display:flex;justify-content:space-between;align-items:center;gap:14px;margin-bottom:28px}
+    .header-actions{display:flex;align-items:center;gap:12px}h1{margin:0;font-size:26px}header span{color:var(--lime);font-weight:800}
+    .logout{border:1px solid var(--line);border-radius:10px;background:transparent;color:#f4f7f4;padding:8px 11px;cursor:pointer}.logout:hover{border-color:var(--lime)}
+    .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}.card{padding:20px;border:1px solid var(--line);border-radius:18px;background:var(--panel)}
+    .label{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.1em}.value{font-size:32px;font-weight:800;margin-top:7px;color:var(--lime)}
+    h2{font-size:18px;margin:28px 0 10px}.table{overflow:auto;border:1px solid var(--line);border-radius:18px}table{width:100%;border-collapse:collapse;min-width:760px}
+    th,td{text-align:left;padding:13px 15px;border-bottom:1px solid var(--line)}th{color:var(--muted);font-size:10px;text-transform:uppercase}.ai{margin-top:14px}.note{color:var(--muted);margin-top:8px}
+    .usage-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:14px}.usage-item{padding:14px;border-radius:12px;background:#07130f;border:1px solid var(--line)}
+    .usage-item b{display:block;font-size:21px;color:var(--lime);margin-top:4px}.usage-category{display:grid;grid-template-columns:1fr auto;gap:12px;padding:9px 0;border-bottom:1px solid var(--line)}
+    @media(max-width:760px){header{align-items:flex-start}.header-actions{align-items:flex-end;flex-direction:column}.stats,.usage-grid{grid-template-columns:1fr 1fr}}
+  </style>
+</head>
+<body>
+<main class="shell">
+  <header>
+    <h1>Motionest <span>Manager</span></h1>
+    <div class="header-actions"><small id="updated"></small><button class="logout" id="logoutBtn" type="button">Se déconnecter</button></div>
+  </header>
+  <section class="stats">
+    <div class="card"><div class="label">Utilisateurs</div><div class="value" id="users">—</div></div>
+    <div class="card"><div class="label">Activités</div><div class="value" id="activities">—</div></div>
+    <div class="card"><div class="label">Messages</div><div class="value" id="messages">—</div></div>
+    <div class="card"><div class="label">Données stockées</div><div class="value" id="storage">—</div></div>
+  </section>
+  <div class="card ai">
+    <div class="label">Coach IA</div><h2 id="aiStatus">Vérification…</h2><div class="note" id="aiNote"></div>
+    <div class="usage-grid">
+      <div class="usage-item"><span class="label">Niveau</span><b id="usageLevel">—</b></div>
+      <div class="usage-item"><span class="label">Appels</span><b id="usageCalls">—</b></div>
+      <div class="usage-item"><span class="label">Tokens totaux</span><b id="usageTotal">—</b></div>
+      <div class="usage-item"><span class="label">Moyenne / appel</span><b id="usageAverage">—</b></div>
+    </div>
+    <h2>Consommation par catégorie</h2><div id="usageCategories"></div>
+  </div>
+  <h2>Nouveaux comptes</h2>
+  <div class="table"><table><thead><tr><th>Compte</th><th>Créé le</th><th>Dernière connexion</th><th>Connexions</th><th>Activités importées</th></tr></thead><tbody id="rows"></tbody></table></div>
+</main>
+<script>
+  const $=id=>document.getElementById(id),fmt=v=>v?new Intl.DateTimeFormat('fr-BE',{dateStyle:'medium',timeStyle:'short'}).format(new Date(v)):'—',num=v=>new Intl.NumberFormat('fr-BE').format(v||0),esc=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+  $('logoutBtn').onclick=async()=>{const response=await fetch('/api/manager/logout',{method:'POST'});if(response.ok)location.href='/'};
+  fetch('/api/manager/stats').then(async response=>{
+    if(response.status===401){location.href='/';return}
+    const data=await response.json();
+    $('users').textContent=data.userCount;$('activities').textContent=data.activityCount;$('messages').textContent=data.messageCount;
+    $('storage').textContent=data.storageBytes<1048576?Math.round(data.storageBytes/1024)+' Ko':(data.storageBytes/1048576).toFixed(1)+' Mo';
+    $('aiStatus').textContent=data.ai.configured?`${data.ai.provider} · ${data.ai.model}`:'Non configuré';$('aiNote').textContent=data.ai.note;
+    $('usageLevel').textContent=data.usage.level;$('usageCalls').textContent=num(data.usage.calls);$('usageTotal').textContent=num(data.usage.total);$('usageAverage').textContent=num(data.usage.average);
+    $('usageCategories').innerHTML=Object.entries(data.usage.categories).map(([name,item])=>`<div class="usage-category"><span>${esc(name.replaceAll('_',' '))}</span><b>${num(item.total)} tokens · ${item.calls} appel(s)</b></div>`).join('')||'<div class="note">Aucune consommation enregistrée.</div>';
+    $('rows').innerHTML=data.users.map(user=>`<tr><td>${esc(user.email)}</td><td>${fmt(user.created_at)}</td><td>${fmt(user.last_login)}</td><td>${num(user.connections)}</td><td>${num(user.activities_imported)}</td></tr>`).join('')||'<tr><td colspan="5">Aucun compte utilisateur pour le moment.</td></tr>';
+    $('updated').textContent='Mis à jour maintenant';
+  });
+</script>
+</body>
+</html>
