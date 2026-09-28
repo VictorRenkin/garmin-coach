@@ -905,11 +905,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 if not email or not password:
                     raise ValueError("L’adresse e-mail et le mot de passe sont requis.")
                 if path == "/api/account/register":
-                    account = register_account(
-                        email,
-                        password,
-                        str(body.get("firstName") or ""),
-                    )
+                    account = register_account(email, password)
                     message = "Ton compte Motionest est créé."
                     created = True
                 else:
@@ -943,7 +939,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     "redirect": "/dashboard",
                     "message": message,
                     "user": {
-                        "firstName": account.get("firstName", ""),
                         "email": account["email"],
                     },
                 },

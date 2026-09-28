@@ -77,13 +77,10 @@ def _password_digest(password: str, salt: bytes) -> bytes:
     )
 
 
-def register_account(email: str, password: str, first_name: str = "") -> dict[str, Any]:
+def register_account(email: str, password: str) -> dict[str, Any]:
     """Crée un compte Motionest autonome et retourne son identité publique."""
     normalized = _normalize_email(email)
     _validate_password(password)
-    clean_name = " ".join(first_name.strip().split())
-    if len(clean_name) > 80:
-        raise ValueError("Le prénom est trop long.")
     with _LOCK:
         users = _load_users()
         if any(str(item.get("email", "")).lower() == normalized for item in users):
@@ -92,7 +89,6 @@ def register_account(email: str, password: str, first_name: str = "") -> dict[st
         user = {
             "email": normalized,
             "id": "u_" + secrets.token_urlsafe(18).replace("-", "_"),
-            "first_name": clean_name,
             "password_salt": _urlsafe_encode(salt),
             "password_hash": _urlsafe_encode(_password_digest(password, salt)),
             "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -102,7 +98,7 @@ def register_account(email: str, password: str, first_name: str = "") -> dict[st
         }
         users.append(user)
         _save_users(users)
-        return {"id": user["id"], "email": normalized, "firstName": clean_name}
+        return {"id": user["id"], "email": normalized}
 
 
 def authenticate_account(email: str, password: str) -> dict[str, Any] | None:
@@ -141,7 +137,6 @@ def authenticate_account(email: str, password: str) -> dict[str, Any] | None:
     return {
         "id": user_id,
         "email": str(user.get("email") or ""),
-        "firstName": str(user.get("first_name") or ""),
     }
 
 

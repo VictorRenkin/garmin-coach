@@ -23,7 +23,9 @@ PRINCIPES NON NÉGOCIABLES
 
 PARCOURS UTILISATEUR CIBLE
 --------------------------
-1. Créer un compte Motionest ou se connecter.
+1. Créer un compte Motionest avec seulement une adresse e-mail et un mot de passe,
+   ou se connecter. Les informations personnelles utiles sont demandées plus tard
+   dans l'onboarding, seulement lorsqu'elles servent réellement au coaching.
 2. Vérifier son adresse e-mail et pouvoir réinitialiser son mot de passe.
 3. Répondre à un onboarding progressif : pratique, niveau, objectif, échéance,
    disponibilités, contraintes, préférences, fatigue et douleurs déclarées.

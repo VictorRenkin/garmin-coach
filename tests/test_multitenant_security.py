@@ -200,17 +200,13 @@ def test_motionest_account_registration_and_login_are_independent_from_garmin(
         status, payload, set_cookie = _post(
             f"http://127.0.0.1:{server.server_port}/api/account/register",
             {
-                "firstName": "Alice",
                 "email": "alice@example.com",
                 "password": "correct-horse-battery-staple",
             },
         )
         assert status == 200
         assert payload["created"] is True
-        assert payload["user"] == {
-            "firstName": "Alice",
-            "email": "alice@example.com",
-        }
+        assert payload["user"] == {"email": "alice@example.com"}
         assert set_cookie.startswith("motionest_session=")
         stored = json.loads(user_accounts.USERS_FILE.read_text(encoding="utf-8"))[0]
         assert stored["password_hash"] != "correct-horse-battery-staple"
@@ -242,16 +238,12 @@ def test_motionest_account_registration_and_login_are_independent_from_garmin(
 def test_motionest_registration_rejects_duplicate_and_short_password(
     isolated_workspaces: Path,
 ) -> None:
-    user_accounts.register_account(
-        "runner@example.com", "long-enough-password", "Runner"
-    )
+    user_accounts.register_account("runner@example.com", "long-enough-password")
 
     with pytest.raises(ValueError, match="existe déjà"):
-        user_accounts.register_account(
-            "RUNNER@example.com", "another-long-password", "Other"
-        )
+        user_accounts.register_account("RUNNER@example.com", "another-long-password")
     with pytest.raises(ValueError, match="au moins"):
-        user_accounts.register_account("new@example.com", "short", "New")
+        user_accounts.register_account("new@example.com", "short")
 
 
 def test_two_full_logins_create_isolated_accounts_and_manager_aggregates_them(

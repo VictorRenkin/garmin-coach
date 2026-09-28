@@ -94,7 +94,6 @@
         <div class="auth-tabs" role="tablist" aria-label="Accès au compte"><button class="auth-tab active" id="loginTab" type="button" role="tab" aria-selected="true">Se connecter</button><button class="auth-tab" id="registerTab" type="button" role="tab" aria-selected="false">Créer un compte</button></div>
         <h2 id="authTitle">Retrouve ton entraînement.</h2>
         <p class="login-intro" id="authIntro">Connecte-toi à ton compte Motionest. Tes applications sportives seront reliées séparément.</p>
-        <div class="field" id="firstNameField" hidden><label for="firstName">Prénom</label><input id="firstName" name="firstName" type="text" autocomplete="given-name" maxlength="80" placeholder="Ton prénom"></div>
         <div class="field"><label for="email">Adresse e-mail</label><input id="email" name="email" type="email" autocomplete="username" inputmode="email" placeholder="toi@exemple.com" required></div>
         <div class="field"><label for="password">Mot de passe Motionest</label><div class="field-control"><input id="password" name="password" type="password" autocomplete="current-password" minlength="10" maxlength="1024" placeholder="10 caractères minimum" required><button class="password-toggle" id="passwordToggle" type="button" aria-label="Maintenir pour afficher le mot de passe" aria-pressed="false"><span class="eye-icon" aria-hidden="true"></span></button></div><small class="hold-hint">Maintiens l’œil pour afficher</small></div>
         <button class="submit" type="submit">Se connecter →</button>
@@ -104,7 +103,7 @@
   </main>
   <script>
     const form=document.getElementById('connect'),status=document.getElementById('formStatus');
-    const password=document.getElementById('password'),passwordToggle=document.getElementById('passwordToggle'),loginTab=document.getElementById('loginTab'),registerTab=document.getElementById('registerTab'),firstNameField=document.getElementById('firstNameField'),firstName=document.getElementById('firstName'),authTitle=document.getElementById('authTitle'),authIntro=document.getElementById('authIntro');
+    const password=document.getElementById('password'),passwordToggle=document.getElementById('passwordToggle'),loginTab=document.getElementById('loginTab'),registerTab=document.getElementById('registerTab'),authTitle=document.getElementById('authTitle'),authIntro=document.getElementById('authIntro');
     let authMode='login';
     const showPassword=()=>{password.type='text';passwordToggle.setAttribute('aria-pressed','true')};
     const hidePassword=()=>{password.type='password';passwordToggle.setAttribute('aria-pressed','false')};
@@ -117,7 +116,7 @@
     passwordToggle.addEventListener('keydown',event=>{if(event.key===' '||event.key==='Enter'){event.preventDefault();showPassword()}});
     passwordToggle.addEventListener('keyup',event=>{if(event.key===' '||event.key==='Enter')hidePassword()});
     const setStatus=(message,state='')=>{status.textContent=message;status.dataset.state=state};
-    function setAuthMode(mode){authMode=mode;const registering=mode==='register';loginTab.classList.toggle('active',!registering);registerTab.classList.toggle('active',registering);loginTab.setAttribute('aria-selected',String(!registering));registerTab.setAttribute('aria-selected',String(registering));firstNameField.hidden=!registering;firstName.required=registering;password.autocomplete=registering?'new-password':'current-password';authTitle.textContent=registering?'Commence ton accompagnement.':'Retrouve ton entraînement.';authIntro.textContent=registering?'Crée ton compte Motionest. Tu pourras ensuite définir ton objectif et connecter tes applications sportives.':'Connecte-toi à ton compte Motionest. Tes applications sportives seront reliées séparément.';form.querySelector('.submit').textContent=registering?'Créer mon compte →':'Se connecter →';setStatus('')}
+    function setAuthMode(mode){authMode=mode;const registering=mode==='register';loginTab.classList.toggle('active',!registering);registerTab.classList.toggle('active',registering);loginTab.setAttribute('aria-selected',String(!registering));registerTab.setAttribute('aria-selected',String(registering));password.autocomplete=registering?'new-password':'current-password';authTitle.textContent=registering?'Commence ton accompagnement.':'Retrouve ton entraînement.';authIntro.textContent=registering?'Crée ton compte Motionest. Tu pourras ensuite définir ton objectif et connecter tes applications sportives.':'Connecte-toi à ton compte Motionest. Tes applications sportives seront reliées séparément.';form.querySelector('.submit').textContent=registering?'Créer mon compte →':'Se connecter →';setStatus('')}
     loginTab.addEventListener('click',()=>setAuthMode('login'));registerTab.addEventListener('click',()=>setAuthMode('register'));
     form.addEventListener('submit',async event=>{
       event.preventDefault();
@@ -126,7 +125,7 @@
       const button=form.querySelector('.submit'),values=new FormData(form);
       button.disabled=true;button.textContent=authMode==='register'?'Création en cours…':'Connexion en cours…';setStatus('Vérification du compte…');
       try{
-        const response=await fetch(`/api/account/${authMode}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({firstName:values.get('firstName'),email:values.get('email'),password:values.get('password')})});
+        const response=await fetch(`/api/account/${authMode}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:values.get('email'),password:values.get('password')})});
         const raw=await response.text();let data={};try{data=JSON.parse(raw)}catch(parseError){}
         if(!response.ok){setStatus(data.message||`Connexion impossible (${response.status}).`,'error');return}
         setStatus(data.message||'Connexion réussie.');window.location.assign(data.redirect||'/dashboard');
