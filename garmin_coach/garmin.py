@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import getpass
+import json
 import logging
 from collections.abc import Callable
 
@@ -16,6 +17,26 @@ from .config import Settings, TOKEN_DIR, ensure_directories
 
 class GarminMFARequiredError(ValueError):
     """La connexion web ne peut pas encore reprendre le flux MFA Garmin."""
+
+
+def stored_tokens_available() -> bool:
+    """Indique si le contexte utilisateur contient deux jetons Garmin lisibles."""
+    required_fields = {
+        "oauth1_token.json": ("oauth_token", "oauth_token_secret"),
+        "oauth2_token.json": ("access_token", "refresh_token"),
+    }
+    for filename, fields in required_fields.items():
+        path = TOKEN_DIR / filename
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return False
+        if not isinstance(payload, dict) or any(
+            not isinstance(payload.get(field), str) or not payload[field].strip()
+            for field in fields
+        ):
+            return False
+    return True
 
 
 def _exception_messages(exc: BaseException) -> str:
