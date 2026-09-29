@@ -147,7 +147,9 @@ def _training_type_counts(items: list[dict[str, Any]]) -> Counter[str]:
     return counts
 
 
-def inspect_garmin_account(client: Any, *, force: bool = False) -> dict[str, Any]:
+def inspect_garmin_account(
+    client: Any, *, force: bool = False, preserve_status: bool = False
+) -> dict[str, Any]:
     """Inventorie une fois l'historique et les séances sans stocker d'identifiants."""
     existing = load_onboarding()
     if not force and existing.get("status") in {
@@ -202,15 +204,24 @@ def inspect_garmin_account(client: Any, *, force: bool = False) -> dict[str, Any
         "regularite_detectee": regular,
         "noms_seances_exemples": names[:8],
     }
+    preserved_status = str(existing.get("status") or "")
+    status = (
+        preserved_status
+        if preserve_status
+        and preserved_status
+        in {"ready", "waiting_existing_plan", "plan_proposed", "complete"}
+        else "needs_profile"
+    )
     payload = {
-        "status": "needs_profile",
+        **existing,
+        "status": status,
         "inspected_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "garmin_summary": summary,
         "required_answers": [
             "objectif et distance visée",
             "date éventuelle de la course",
             "nombre de séances possibles par semaine",
-            "jours ou contraintes de disponibilité",
+            "jours de disponibilité",
             "niveau de fatigue, douleurs et préférences",
         ],
         "publication_allowed": False,
@@ -220,6 +231,31 @@ def inspect_garmin_account(client: Any, *, force: bool = False) -> dict[str, Any
         json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     return payload
+
+
+def update_garmin_setup(
+    status: str,
+    *,
+    message: str = "",
+    error: str = "",
+    failed_step: str = "",
+    retryable: bool = False,
+) -> dict[str, Any]:
+    """Persiste l'avancement du setup Garmin dans l'espace de l'utilisateur."""
+    state = load_onboarding()
+    state["garmin_setup"] = {
+        "status": status,
+        "message": message,
+        "error": error,
+        "failed_step": failed_step,
+        "retryable": retryable,
+        "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
+    ensure_directories()
+    ONBOARDING_FILE.write_text(
+        json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return state
 
 
 def onboarding_prompt(state: dict[str, Any]) -> str:
@@ -245,7 +281,7 @@ def onboarding_prompt(state: dict[str, Any]) -> str:
     return (
         observation
         + " Quel objectif aimerais-tu maintenant préparer ? Ensuite, je te demanderai seulement "
-        "ce que tes données ne peuvent pas me dire : tes disponibilités et tes éventuelles contraintes."
+        "ce que tes données ne peuvent pas me dire : tes disponibilités, douleurs et préférences."
     )
 
 
@@ -300,6 +336,11 @@ def mark_plan_rejected(feedback: str = "") -> dict[str, Any]:
     state["status"] = "ready"
     state["publication_allowed"] = False
     state["last_plan_feedback"] = feedback.strip()[:1000]
+    setup = state.get("garmin_setup")
+    if isinstance(setup, dict):
+        setup["status"] = "plan_rejected"
+        setup["message"] = "Le plan doit être ajusté avant une nouvelle proposition."
+        setup["retryable"] = False
     ensure_directories()
     ONBOARDING_FILE.write_text(
         json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8"

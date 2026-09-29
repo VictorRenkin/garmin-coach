@@ -69,6 +69,35 @@ def test_profile_then_plan_confirmation_controls_publication(tmp_path, monkeypat
     assert complete["publication_allowed"] is True
 
 
+def test_rejecting_generated_plan_preserves_dashboard_revision_state(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(onboarding, "ONBOARDING_FILE", tmp_path / "onboarding.json")
+    monkeypatch.setattr(onboarding, "ensure_directories", lambda: None)
+    onboarding.mark_profile_ready()
+    onboarding.update_garmin_setup("plan_proposed")
+    onboarding.mark_plan_proposed("C:/draft-plan.json")
+
+    rejected = onboarding.mark_plan_rejected("Plus léger")
+
+    assert rejected["garmin_setup"]["status"] == "plan_rejected"
+    assert rejected["publication_allowed"] is False
+
+
+def test_forced_inspection_preserves_completed_questionnaire(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(onboarding, "ONBOARDING_FILE", tmp_path / "onboarding.json")
+    monkeypatch.setattr(onboarding, "ensure_directories", lambda: None)
+    onboarding.mark_profile_ready()
+
+    state = onboarding.inspect_garmin_account(
+        FakeGarmin(), force=True, preserve_status=True
+    )
+
+    assert state["status"] == "ready"
+    assert "garmin_summary" in state
+    assert all("contraintes" not in answer for answer in state["required_answers"])
+
+
 def test_onboarding_prompt_mentions_detected_structure(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(onboarding, "ONBOARDING_FILE", tmp_path / "onboarding.json")
     monkeypatch.setattr(onboarding, "ensure_directories", lambda: None)

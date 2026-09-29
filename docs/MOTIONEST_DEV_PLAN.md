@@ -21,7 +21,10 @@ Création du compte
 → onboarding
 → connexion Garmin
 → première synchronisation
-→ dashboard
+→ analyse de l'historique
+→ proposition du plan sur le dashboard
+→ acceptation explicite
+→ publication Garmin éventuelle
 ```
 
 ## Étapes de développement
@@ -37,20 +40,33 @@ l'onboarding et des tokens Garmin propres à l'utilisateur.
 Utiliser l'étape centralisée uniquement après `POST /api/account/login`, sans
 généraliser encore la protection à toutes les routes.
 
-### 3. Construire la connexion Garmin moderne — à faire
+### 3. Construire la connexion Garmin moderne — terminé
 
 Créer un parcours Garmin rattaché à une session Motionest existante. Ne pas
 réutiliser l'ancien `/api/login` sans audit spécifique.
 
-### 4. Première synchronisation contrôlée — à faire
+La page protégée `/connect-garmin` et les endpoints authentifiés
+`POST /api/garmin/connect`, `GET /api/garmin/setup-status` et
+`POST /api/garmin/setup-retry` utilisent exclusivement l'utilisateur de la
+session Motionest. L'ancien `/api/login` reste disponible pendant la transition.
+
+### 4. Première synchronisation contrôlée — terminé
 
 Déclencher l'inspection et la synchronisation après une connexion Garmin
 réussie, avec erreurs explicites et isolation utilisateur.
 
-### 5. Imposer le parcours aux routes — à faire
+Le pipeline asynchrone persiste son état dans `garmin_setup`, importe les
+activités, analyse l'historique puis prépare une proposition. Il ne publie
+jamais le plan avant l'acceptation explicite existante.
+
+### 5. Imposer le parcours aux routes — en cours
 
 Appliquer progressivement la décision backend aux routes sensibles, avec des
 tests d'accès direct pour chaque étape.
+
+Les pages `/dashboard` et `/connect-garmin` empêchent désormais de sauter
+l'étape Garmin ou de revenir au setup après la proposition. La généralisation
+aux autres routes sensibles reste une étape séparée.
 
 ### 6. Fonctionnalités produit suivantes — à faire
 

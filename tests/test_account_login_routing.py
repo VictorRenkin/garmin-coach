@@ -107,7 +107,7 @@ def test_login_routes_completed_onboarding_to_future_garmin_step(
 
     assert status == 200
     assert payload["nextStep"] == "connect_garmin"
-    assert payload["redirect"] == "/?next=connect_garmin"
+    assert payload["redirect"] == "/connect-garmin"
 
 
 def test_login_routes_ready_user_to_dashboard(isolated_accounts: Path) -> None:

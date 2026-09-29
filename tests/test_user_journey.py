@@ -70,7 +70,7 @@ def test_verified_email_without_onboarding_starts_onboarding(
 
 @pytest.mark.parametrize(
     "status",
-    ["needs_profile", "ready", "waiting_existing_plan", "plan_proposed"],
+    ["needs_profile"],
 )
 def test_incomplete_onboarding_stays_in_onboarding(
     isolated_journey: Path, status: str
@@ -83,6 +83,53 @@ def test_incomplete_onboarding_stays_in_onboarding(
     _write_tokens(isolated_journey, "u_runner")
 
     assert determine_user_stage("u_runner") == "onboarding"
+
+
+def test_ready_with_garmin_stays_in_setup_until_plan_is_proposed(
+    isolated_journey: Path,
+) -> None:
+    _write_accounts(
+        isolated_journey,
+        {"id": "u_runner", "email_verified": True},
+    )
+    _write_onboarding(isolated_journey, "u_runner", "ready")
+    _write_tokens(isolated_journey, "u_runner")
+
+    assert determine_user_stage("u_runner") == "connect_garmin"
+
+
+@pytest.mark.parametrize("status", ["waiting_existing_plan", "plan_proposed"])
+def test_existing_or_proposed_plan_opens_dashboard(
+    isolated_journey: Path, status: str
+) -> None:
+    _write_accounts(
+        isolated_journey,
+        {"id": "u_runner", "email_verified": True},
+    )
+    _write_onboarding(isolated_journey, "u_runner", status)
+    _write_tokens(isolated_journey, "u_runner")
+
+    assert determine_user_stage("u_runner") == "dashboard"
+
+
+def test_rejected_plan_with_garmin_returns_to_dashboard(
+    isolated_journey: Path,
+) -> None:
+    _write_accounts(
+        isolated_journey,
+        {"id": "u_runner", "email_verified": True},
+    )
+    target = isolated_journey / "users" / "u_runner" / "onboarding.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        json.dumps(
+            {"status": "ready", "garmin_setup": {"status": "plan_rejected"}}
+        ),
+        encoding="utf-8",
+    )
+    _write_tokens(isolated_journey, "u_runner")
+
+    assert determine_user_stage("u_runner") == "dashboard"
 
 
 def test_complete_onboarding_without_garmin_requires_connection(

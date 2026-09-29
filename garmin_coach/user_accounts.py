@@ -440,7 +440,13 @@ def user_from_cookie(cookie: str) -> str | None:
     ).digest()
     try:
         signature = _urlsafe_decode(supplied_signature)
-        payload = _urlsafe_decode(encoded).decode("ascii")
+        payload_bytes = _urlsafe_decode(encoded)
+        if (
+            _urlsafe_encode(signature) != supplied_signature
+            or _urlsafe_encode(payload_bytes) != encoded
+        ):
+            return None
+        payload = payload_bytes.decode("ascii")
         user_id, expires_text, _nonce = payload.split(":", 2)
         expires = int(expires_text)
     except (ValueError, UnicodeDecodeError):

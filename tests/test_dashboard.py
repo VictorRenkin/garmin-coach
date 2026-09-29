@@ -65,11 +65,75 @@ def test_save_objective_persists_validated_profile(tmp_path: Path, monkeypatch) 
             "distanceKm": 10,
             "sessionsPerWeek": 4,
             "raceDate": "2026-10-04",
+            "goal_target_time": "00:40:00",
         }
     )
 
     assert objective["distanceKm"] == 10
+    assert objective["goal_target_time"] == "00:40:00"
     assert dashboard.load_objective() == objective
+
+
+def test_save_objective_rejects_non_canonical_target_time(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(dashboard, "PROFILE_FILE", tmp_path / "profile.json")
+    monkeypatch.setattr(dashboard, "ensure_directories", lambda: None)
+
+    with pytest.raises(ValueError, match="HH:MM:SS"):
+        dashboard.save_objective(
+            {
+                "title": "Courir un semi-marathon",
+                "sessionsPerWeek": 3,
+                "goal_target_time": "1:30:00",
+            }
+        )
+
+
+def test_legacy_constraints_remain_readable_when_new_form_omits_them(
+    tmp_path: Path, monkeypatch
+) -> None:
+    profile = tmp_path / "profile.json"
+    profile.write_text(
+        json.dumps(
+            {
+                "objective": {
+                    "goalType": "race",
+                    "title": "Ancien objectif",
+                    "distanceKm": 10,
+                    "sessionsPerWeek": 3,
+                    "raceDate": None,
+                    "availableDays": [],
+                    "constraints": "Indisponible le mercredi",
+                    "injuryPain": "",
+                    "preferences": "",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(dashboard, "PROFILE_FILE", profile)
+    monkeypatch.setattr(dashboard, "ensure_directories", lambda: None)
+
+    assert dashboard.load_objective()["constraints"] == "Indisponible le mercredi"
+    objective = dashboard.save_objective(
+        {
+            "goalType": "race",
+            "title": "Nouvel objectif",
+            "distanceKm": 10,
+            "sessionsPerWeek": 3,
+            "raceDate": None,
+            "availableDays": [],
+        }
+    )
+    assert objective["constraints"] == "Indisponible le mercredi"
+
+
+def test_new_onboarding_has_no_visible_constraints_question() -> None:
+    html = dashboard.TEMPLATE_FILE.read_text(encoding="utf-8")
+
+    assert 'name="constraints"' not in html
+    assert 'name="goal_target_time"' in html
 
 
 def test_save_objective_accepts_coaching_goal_without_race_distance(

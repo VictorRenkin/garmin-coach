@@ -37,8 +37,19 @@ def determine_user_stage(user_id: str) -> UserJourneyStage:
         return "verify_email"
 
     with user_context(user_id):
-        if load_onboarding().get("status") != "complete":
+        onboarding = load_onboarding()
+        status = str(onboarding.get("status") or "not_started")
+        if status not in {
+            "ready",
+            "waiting_existing_plan",
+            "plan_proposed",
+            "complete",
+        }:
             return "onboarding"
         if not stored_tokens_available():
+            return "connect_garmin"
+        setup = onboarding.get("garmin_setup")
+        setup_status = str(setup.get("status") or "") if isinstance(setup, dict) else ""
+        if status == "ready" and setup_status != "plan_rejected":
             return "connect_garmin"
     return "dashboard"

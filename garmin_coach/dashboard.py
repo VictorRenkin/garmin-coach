@@ -5,6 +5,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import threading
 import webbrowser
 from datetime import date, datetime, timedelta
@@ -44,7 +45,9 @@ from .garmin import (
     authenticate_with_credentials,
     connect,
     persist_client_tokens,
+    stored_tokens_available,
 )
+from .garmin_setup import setup_status, start_initial_setup
 from .garmin_workouts import publish_plan, remove_future_sessions, replace_future_plan
 from .manager import MANAGER_EMAIL, manager_authorized, manager_cookie, manager_login, manager_stats
 from .user_accounts import (
@@ -71,6 +74,7 @@ from .onboarding import (
     mark_plan_proposed,
     mark_plan_rejected,
     mark_profile_ready,
+    update_garmin_setup,
 )
 from .summary import is_running
 from .storage import load_activities
@@ -92,6 +96,7 @@ LANDING_FILE = Path(__file__).with_name("landing.html")
 TERMS_FILE = Path(__file__).with_name("terms.html")
 PRIVACY_FILE = Path(__file__).with_name("privacy.html")
 RESET_PASSWORD_FILE = Path(__file__).with_name("reset_password.html")
+CONNECT_GARMIN_FILE = Path(__file__).with_name("connect_garmin.html")
 ASSETS_DIR = Path(__file__).with_name("assets")
 MANAGER_FILE = Path(__file__).with_name("manager.html")
 LOGGER = logging.getLogger(__name__)
@@ -102,6 +107,7 @@ DEFAULT_OBJECTIVE = {
     "distanceKm": None,
     "sessionsPerWeek": None,
     "raceDate": None,
+    "goal_target_time": None,
     "availableDays": [],
     "constraints": "",
     "injuryPain": "",
@@ -199,6 +205,12 @@ def save_objective(payload: dict[str, Any]) -> dict[str, Any]:
     if race_date:
         date.fromisoformat(race_date)
 
+    goal_target_time = str(payload.get("goal_target_time") or "").strip() or None
+    if goal_target_time:
+        match = re.fullmatch(r"(\d{2}):([0-5]\d):([0-5]\d)", goal_target_time)
+        if not match:
+            raise ValueError("Le temps objectif doit utiliser le format HH:MM:SS.")
+
     goal_type = str(payload.get("goalType") or "other").strip().lower()
     if not 2 <= len(goal_type) <= 32 or not all(
         character.isalnum() or character in "-_" for character in goal_type
@@ -223,14 +235,20 @@ def save_objective(payload: dict[str, Any]) -> dict[str, Any]:
             raise ValueError(f"Le champ {label} ne peut pas dépasser 600 caractères.")
         return value
 
+    current = load_objective()
     objective = {
         "goalType": goal_type,
         "title": title,
         "distanceKm": round(distance, 2) if distance is not None else None,
         "sessionsPerWeek": frequency,
         "raceDate": race_date,
+        "goal_target_time": goal_target_time,
         "availableDays": available_days,
-        "constraints": optional_note("constraints", "contraintes"),
+        "constraints": (
+            optional_note("constraints", "contraintes")
+            if "constraints" in payload
+            else str(current.get("constraints") or "")
+        ),
         "injuryPain": optional_note("injuryPain", "douleurs ou blessures"),
         "preferences": optional_note("preferences", "préférences"),
     }
@@ -254,6 +272,9 @@ def apply_objective_update(update: dict[str, Any]) -> dict[str, Any]:
                 "sessions_per_week", current.get("sessionsPerWeek")
             ),
             "raceDate": update.get("race_date", current.get("raceDate")),
+            "goal_target_time": update.get(
+                "goal_target_time", current.get("goal_target_time")
+            ),
             "availableDays": current.get("availableDays", []),
             "constraints": current.get("constraints", ""),
             "injuryPain": current.get("injuryPain", ""),
@@ -743,6 +764,28 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if not user_id:
             return
         with user_context(user_id):
+            if path in {"/dashboard", "/connect-garmin"}:
+                stage = determine_user_stage(user_id)
+                if stage == "verify_email":
+                    self.send_response(302)
+                    self.send_header("Location", "/")
+                    self.end_headers()
+                    return
+                if path == "/dashboard" and stage == "connect_garmin":
+                    self.send_response(302)
+                    self.send_header("Location", "/connect-garmin")
+                    self.end_headers()
+                    return
+                if path == "/connect-garmin" and stage == "onboarding":
+                    self.send_response(302)
+                    self.send_header("Location", "/dashboard")
+                    self.end_headers()
+                    return
+                if path == "/connect-garmin" and stage == "dashboard":
+                    self.send_response(302)
+                    self.send_header("Location", "/dashboard")
+                    self.end_headers()
+                    return
             self._do_GET()
 
     def _do_GET(self) -> None:
@@ -785,6 +828,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if path == "/dashboard":
             body = TEMPLATE_FILE.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if path == "/connect-garmin":
+            body = CONNECT_GARMIN_FILE.read_bytes()
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
@@ -864,6 +916,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/onboarding":
             _json_response(self, {"onboarding": load_onboarding()})
+            return
+        if path == "/api/garmin/setup-status":
+            _json_response(
+                self,
+                {
+                    "ok": True,
+                    "connected": stored_tokens_available(),
+                    "setup": setup_status(),
+                },
+            )
             return
         if path == "/api/manager/stats":
             if not manager_authorized(self.headers.get("Cookie", "")):
@@ -1054,7 +1116,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     "redirect": {
                         "verify_email": "/",
                         "onboarding": "/dashboard",
-                        "connect_garmin": "/?next=connect_garmin",
+                        "connect_garmin": "/connect-garmin",
                         "dashboard": "/dashboard",
                     }[next_step],
                     "message": "Connexion réussie.",
@@ -1063,6 +1125,97 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     },
                 },
                 headers={"Set-Cookie": session_cookie(user_session, remember=remember)},
+            )
+            return
+        if path == "/api/garmin/connect":
+            user_id = current_user_id()
+            if not user_id or determine_user_stage(user_id) != "connect_garmin":
+                _json_response(
+                    self,
+                    {"ok": False, "message": "Termine d’abord l’étape Motionest en cours."},
+                    409,
+                )
+                return
+            try:
+                content_length = int(self.headers.get("Content-Length", "0"))
+                if content_length < 0 or content_length > 16_384:
+                    raise ValueError("Requête de connexion trop volumineuse.")
+                body = json.loads(self.rfile.read(content_length) or b"{}")
+                if not isinstance(body, dict):
+                    raise ValueError("Requête de connexion invalide.")
+                email = str(body.get("email") or "").strip()
+                password = str(body.get("password") or "")
+                mfa_code = str(body.get("mfaCode") or "").strip()
+                if not email or not password:
+                    raise ValueError("L’adresse e-mail et le mot de passe Garmin sont requis.")
+                client = authenticate_with_credentials(
+                    email, password, mfa_code or None
+                )
+                persist_client_tokens(client)
+                update_garmin_setup("connected", message="Garmin connecté ✓")
+                started = start_initial_setup(current_user_id())
+            except GarminMFARequiredError:
+                _json_response(
+                    self,
+                    {
+                        "ok": False,
+                        "mfaRequired": True,
+                        "message": "Saisis le code de vérification envoyé par Garmin.",
+                    },
+                    409,
+                )
+                return
+            except (ValueError, TypeError, json.JSONDecodeError) as exc:
+                _json_response(self, {"ok": False, "message": str(exc)}, 400)
+                return
+            except GarminConnectAuthenticationError:
+                _json_response(self, {"ok": False, "message": "Identifiants Garmin incorrects."}, 401)
+                return
+            except GarminConnectTooManyRequestsError:
+                _json_response(self, {"ok": False, "message": "Garmin limite temporairement les connexions."}, 429)
+                return
+            except (GarminConnectConnectionError, GarthException):
+                _json_response(self, {"ok": False, "message": "Garmin Connect est momentanément indisponible."}, 503)
+                return
+            except Exception:
+                LOGGER.exception("Erreur interne pendant la connexion Garmin Motionest")
+                _json_response(self, {"ok": False, "message": "Le serveur Motionest a rencontré une erreur interne."}, 500)
+                return
+            _json_response(
+                self,
+                {
+                    "ok": True,
+                    "started": started,
+                    "message": "Garmin connecté. L’import démarre en arrière-plan.",
+                },
+                202,
+            )
+            return
+        if path == "/api/garmin/setup-retry":
+            user_id = current_user_id()
+            if not user_id or determine_user_stage(user_id) != "connect_garmin":
+                _json_response(
+                    self,
+                    {"ok": False, "message": "Aucun setup Garmin à relancer."},
+                    409,
+                )
+                return
+            if not stored_tokens_available():
+                _json_response(
+                    self,
+                    {"ok": False, "message": "Reconnecte d’abord Garmin."},
+                    409,
+                )
+                return
+            started = start_initial_setup(current_user_id())
+            _json_response(
+                self,
+                {
+                    "ok": True,
+                    "started": started,
+                    "message": "Nouvelle tentative lancée sans reconnexion Garmin.",
+                },
+                202,
             )
             return
         if path == "/api/login":
@@ -1206,7 +1359,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         f"Merci, j’ai maintenant les éléments utiles. Pour « {objective['title']} », "
                         f"je te propose de construire une semaine de {sessions} "
                         f"entraînement{'s' if sessions > 1 else ''}{availability}, avec une progression adaptée à ton objectif "
-                        "et à tes contraintes. On peut d’abord discuter des séances proposées ici : "
+                        "et à tes préférences. On peut d’abord discuter des séances proposées ici : "
                         "dis-moi si tu préfères commencer prudemment, normalement, ou avec une semaine légère."
                     ),
                     "garmin-onboarding-training-discussion",
@@ -1308,6 +1461,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     if onboarding.get("status") != "ready":
                         raise ValueError(
                             "Confirme d'abord l'objectif et le nombre de séances."
+                        )
+                    if not stored_tokens_available() or not isinstance(
+                        onboarding.get("garmin_summary"), dict
+                    ):
+                        raise ValueError(
+                            "Connecte et importe Garmin avant de préparer le plan."
                         )
                     settings = load_settings()
                     target = generate_initial_plan(settings, onboarding)
