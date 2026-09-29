@@ -62,6 +62,7 @@ from .user_accounts import (
     user_id_for_email,
     user_login_lock,
 )
+from .user_journey import determine_user_stage
 from .onboarding import (
     inspect_garmin_account,
     load_onboarding,
@@ -1020,13 +1021,25 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         send_account_email(pending[0], "verify", pending[1])
                     _json_response(
                         self,
-                        {"ok": False, "verificationPending": True, "message": "Confirme d’abord ton adresse e-mail."},
+                        {
+                            "ok": False,
+                            "verificationPending": True,
+                            "nextStep": "verify_email",
+                            "redirect": "/",
+                            "message": "Confirme d’abord ton adresse e-mail.",
+                        },
                         status=403,
                     )
                     return
                 remember = body.get("remember") is True
                 user_id = str(account["id"])
-                record_login(str(account["email"]), user_id, imported=0, onboarding_complete=False)
+                next_step = determine_user_stage(user_id)
+                record_login(
+                    str(account["email"]),
+                    user_id,
+                    imported=0,
+                    onboarding_complete=next_step in {"connect_garmin", "dashboard"},
+                )
                 user_session = create_session(user_id, remember=remember)
             except (ValueError, TypeError, json.JSONDecodeError) as exc:
                 _json_response(self, {"ok": False, "message": str(exc)}, status=400)
@@ -1037,7 +1050,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     "ok": True,
                     "role": "athlete",
                     "created": False,
-                    "redirect": "/dashboard",
+                    "nextStep": next_step,
+                    "redirect": {
+                        "verify_email": "/",
+                        "onboarding": "/dashboard",
+                        "connect_garmin": "/?next=connect_garmin",
+                        "dashboard": "/dashboard",
+                    }[next_step],
                     "message": "Connexion réussie.",
                     "user": {
                         "email": account["email"],

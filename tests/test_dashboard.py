@@ -330,6 +330,12 @@ def test_login_keeps_registration_only_fields_hidden_and_has_no_eye_control() ->
     assert "eye-icon" not in html
 
 
+def test_dashboard_opens_existing_onboarding_for_a_new_motionest_account() -> None:
+    html = dashboard.TEMPLATE_FILE.read_text(encoding="utf-8")
+
+    assert "['not_started','needs_profile'].includes(state.onboarding?.status)" in html
+
+
 def test_chat_http_endpoint_queues_ai_response(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(coach_chat, "MESSAGES_FILE", tmp_path / "messages.json")
     monkeypatch.setattr(coach_chat, "COACH_DRAFTS_DIR", tmp_path / "drafts")

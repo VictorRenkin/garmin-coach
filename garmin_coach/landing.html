@@ -138,7 +138,7 @@
     function showInsight(index){insight.classList.add('changing');signals.forEach((button,i)=>button.classList.toggle('active',i===index));setTimeout(()=>{insight.textContent=insights[index];insight.classList.remove('changing')},200)}
     signals.forEach((button,index)=>button.addEventListener('click',()=>showInsight(index)));
     configureBotProtection();
-    const params=new URLSearchParams(location.search);if(params.get('verified')==='1')setStatus('Adresse confirmée. Tu peux maintenant te connecter.');if(params.get('verification')==='invalid')setStatus('Ce lien de confirmation est invalide ou a expiré.','error');if(params.get('passwordReset')==='1')setStatus('Mot de passe modifié. Tu peux te connecter.');
+    const params=new URLSearchParams(location.search);if(params.get('verified')==='1')setStatus('Adresse confirmée. Tu peux maintenant te connecter.');if(params.get('verification')==='invalid')setStatus('Ce lien de confirmation est invalide ou a expiré.','error');if(params.get('passwordReset')==='1')setStatus('Mot de passe modifié. Tu peux te connecter.');if(params.get('next')==='connect_garmin')setStatus('Ton onboarding est terminé. La connexion Garmin sera la prochaine étape.');
   </script>
 </body>
 </html>
