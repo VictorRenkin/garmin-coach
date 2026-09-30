@@ -10,9 +10,9 @@
     main{width:min(520px,100%);padding:30px;border:1px solid var(--line);border-radius:24px;background:rgba(12,26,23,.96);box-shadow:0 24px 70px rgba(0,0,0,.35)}
     .kicker{color:var(--accent);font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase}h1{margin:8px 0 8px;font-size:32px}p{color:var(--muted)}
     .provider{margin:24px 0 18px;padding:18px;border:1px solid var(--line);border-radius:16px;background:var(--panel)}.provider strong{display:block;font-size:18px}
-    form{display:grid;gap:13px;margin-top:17px}label{display:grid;gap:6px;color:var(--muted);font-size:12px}input{width:100%;padding:12px;border:1px solid var(--line);border-radius:10px;background:#07130f;color:var(--text);font:inherit}
+    form{display:grid;gap:13px;margin-top:17px}label{display:grid;gap:6px;color:var(--muted);font-size:12px}input,select{width:100%;padding:12px;border:1px solid var(--line);border-radius:10px;background:#07130f;color:var(--text);font:inherit}.scope-help{margin:0;font-size:12px}.scope-note{margin:0;color:var(--accent);font-size:12px}
     button{padding:12px 16px;border:0;border-radius:11px;background:var(--accent);color:#111a0b;font:inherit;font-weight:800;cursor:pointer}button:disabled{opacity:.55;cursor:wait}.secondary{background:transparent;color:var(--accent);border:1px solid var(--line)}
-    #progress{display:grid;gap:9px;margin-top:20px}.step{color:var(--muted)}.step.active{color:var(--text)}.step.done{color:var(--accent)}#message.error{color:var(--error)}[hidden]{display:none!important}
+    #progress{display:grid;gap:9px;margin-top:20px}.step{color:var(--muted)}.step.active{color:var(--text)}.step.done{color:var(--accent)}#historyCounters{color:var(--muted);font-size:12px}#message.error{color:var(--error)}[hidden]{display:none!important}
   </style>
 </head>
 <body>
@@ -23,9 +23,22 @@
   <section class="provider">
     <strong>Garmin Connect</strong>
     <form id="garminForm">
-      <label>Adresse e-mail Garmin<input id="email" type="email" autocomplete="username" required></label>
-      <label>Mot de passe Garmin<input id="password" type="password" autocomplete="current-password" required></label>
-      <label id="mfaField" hidden>Code de vérification Garmin<input id="mfaCode" inputmode="numeric" autocomplete="one-time-code"></label>
+      <label>Profondeur de l’historique
+        <select id="historyScope" required>
+          <option value="3_months">3 mois</option>
+          <option value="6_months">6 mois</option>
+          <option value="1_year">1 an</option>
+          <option value="2_years" selected>2 ans — recommandé</option>
+          <option value="all">Tout l’historique</option>
+        </select>
+      </label>
+      <p class="scope-help">Plus d'historique permet à Motionest de mieux comprendre ta progression, tes périodes d'arrêt et tes habitudes sportives.</p>
+      <p class="scope-note" id="allHistoryNote" hidden>L’import initial de tout l’historique peut être sensiblement plus long.</p>
+      <div id="credentialsFields">
+        <label>Adresse e-mail Garmin<input id="email" type="email" autocomplete="username" required></label>
+        <label>Mot de passe Garmin<input id="password" type="password" autocomplete="current-password" required></label>
+        <label id="mfaField" hidden>Code de vérification Garmin<input id="mfaCode" inputmode="numeric" autocomplete="one-time-code"></label>
+      </div>
       <button id="connectButton" type="submit">Connecter Garmin</button>
     </form>
     <button id="retryButton" class="secondary" type="button" hidden>Réessayer sans reconnecter Garmin</button>
@@ -35,17 +48,19 @@
     <div class="step" data-status="importing">Importation de tes activités…</div>
     <div class="step" data-status="analyzing">Analyse de ton historique…</div>
     <div class="step" data-status="preparing_plan">Préparation de ton plan…</div>
+    <div id="historyCounters" hidden></div>
   </div>
   <p id="message" role="status"></p>
 </main>
 <script>
-  const form=document.getElementById('garminForm'),button=document.getElementById('connectButton'),mfa=document.getElementById('mfaField'),progress=document.getElementById('progress'),message=document.getElementById('message'),retry=document.getElementById('retryButton');
+  const form=document.getElementById('garminForm'),button=document.getElementById('connectButton'),credentials=document.getElementById('credentialsFields'),mfa=document.getElementById('mfaField'),progress=document.getElementById('progress'),message=document.getElementById('message'),retry=document.getElementById('retryButton'),scope=document.getElementById('historyScope'),allHistoryNote=document.getElementById('allHistoryNote'),historyCounters=document.getElementById('historyCounters');
   const order=['connected','importing','analyzing','preparing_plan','plan_proposed'];let timer=null;
-  function render(data){const setup=data.setup||{},status=setup.status||'idle',index=order.indexOf(status);progress.hidden=!data.connected&&index<0;document.querySelectorAll('.step').forEach((node,i)=>{node.classList.toggle('done',index>i);node.classList.toggle('active',index===i)});message.textContent=setup.message||'';message.classList.toggle('error',status==='error');form.hidden=data.connected;retry.hidden=!(data.connected&&status==='error'&&setup.retryable);if(['plan_proposed','complete'].includes(status)){window.location.assign('/dashboard');return}if(['connected','importing','analyzing','preparing_plan'].includes(status)){clearTimeout(timer);timer=setTimeout(refresh,1200)}}
+  function updateScopeNote(){allHistoryNote.hidden=scope.value!=='all'}
+  function render(data){const setup=data.setup||{},history=data.historyImport||{},status=setup.status||'idle',index=order.indexOf(status);progress.hidden=!data.connected&&index<0;if(history.scope)scope.value=history.scope;updateScopeNote();const counters=[['pages examinées',history.pages_examined],['activités examinées',history.activities_examined],['métadonnées sauvegardées',history.metadata_saved],['détails terminés',history.activities_detail_complete],['détails en attente',history.activities_detail_pending],['retries',history.activities_retrying]].filter(([,value])=>Number(value)>0);historyCounters.hidden=!counters.length;historyCounters.textContent=counters.map(([label,value])=>`${value} ${label}`).join(' · ');document.querySelectorAll('.step').forEach((node,i)=>{node.classList.toggle('done',index>i);node.classList.toggle('active',index===i)});message.textContent=setup.message||'';message.classList.toggle('error',status==='error');credentials.hidden=data.connected;button.hidden=data.connected;retry.hidden=!(data.connected&&(status==='idle'||(status==='error'&&setup.retryable)));scope.disabled=data.connected&&!['idle','error'].includes(status);if(['plan_proposed','complete'].includes(status)){window.location.assign('/dashboard');return}if(['connected','importing','analyzing','preparing_plan'].includes(status)){clearTimeout(timer);timer=setTimeout(refresh,1200)}}
   async function refresh(){try{const response=await fetch('/api/garmin/setup-status'),data=await response.json();if(response.status===401){window.location.assign('/');return}render(data)}catch(error){message.textContent='Impossible de lire l’avancement. Nouvelle tentative…';timer=setTimeout(refresh,2500)}}
-  form.addEventListener('submit',async event=>{event.preventDefault();button.disabled=true;message.classList.remove('error');message.textContent='Connexion sécurisée à Garmin…';try{const response=await fetch('/api/garmin/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:document.getElementById('email').value,password:document.getElementById('password').value,mfaCode:document.getElementById('mfaCode').value})}),data=await response.json();if(data.mfaRequired){mfa.hidden=false;document.getElementById('mfaCode').required=true;document.getElementById('mfaCode').focus();message.textContent=data.message;return}if(!response.ok)throw new Error(data.message||'Connexion Garmin impossible.');form.reset();mfa.hidden=true;await refresh()}catch(error){message.textContent=error.message;message.classList.add('error')}finally{button.disabled=false}});
-  retry.addEventListener('click',async()=>{retry.disabled=true;try{const response=await fetch('/api/garmin/setup-retry',{method:'POST'}),data=await response.json();if(!response.ok)throw new Error(data.message||'Nouvelle tentative impossible.');await refresh()}catch(error){message.textContent=error.message;message.classList.add('error')}finally{retry.disabled=false}});
-  refresh();
+  form.addEventListener('submit',async event=>{event.preventDefault();button.disabled=true;message.classList.remove('error');message.textContent='Connexion sécurisée à Garmin…';try{const response=await fetch('/api/garmin/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:document.getElementById('email').value,password:document.getElementById('password').value,mfaCode:document.getElementById('mfaCode').value,historyScope:scope.value})}),data=await response.json();if(data.mfaRequired){mfa.hidden=false;document.getElementById('mfaCode').required=true;document.getElementById('mfaCode').focus();message.textContent=data.message;return}if(!response.ok)throw new Error(data.message||'Connexion Garmin impossible.');form.reset();mfa.hidden=true;await refresh()}catch(error){message.textContent=error.message;message.classList.add('error')}finally{button.disabled=false}});
+  retry.addEventListener('click',async()=>{retry.disabled=true;try{const response=await fetch('/api/garmin/setup-retry',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({historyScope:scope.value})}),data=await response.json();if(!response.ok)throw new Error(data.message||'Nouvelle tentative impossible.');await refresh()}catch(error){message.textContent=error.message;message.classList.add('error')}finally{retry.disabled=false}});
+  scope.addEventListener('change',updateScopeNote);updateScopeNote();refresh();
 </script>
 </body>
 </html>

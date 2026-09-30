@@ -84,6 +84,7 @@ STATE_FILE = _UserPath("state.json")
 CODEX_STATE_FILE = _UserPath("codex_state.json")
 PROFILE_FILE = _UserPath("profile.json")
 ONBOARDING_FILE = _UserPath("onboarding.json")
+HISTORY_IMPORT_FILE = _UserPath("history_import.json")
 COACH_MEMORY_FILE = _UserPath("coach_memory.json")
 TOKEN_DIR = _UserPath("", token=True)
 

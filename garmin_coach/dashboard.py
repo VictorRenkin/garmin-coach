@@ -48,6 +48,11 @@ from .garmin import (
     stored_tokens_available,
 )
 from .garmin_setup import setup_status, start_initial_setup
+from .history_import import (
+    initialize_history_import,
+    load_history_import,
+    validate_scope,
+)
 from .garmin_workouts import publish_plan, remove_future_sessions, replace_future_plan
 from .manager import MANAGER_EMAIL, manager_authorized, manager_cookie, manager_login, manager_stats
 from .user_accounts import (
@@ -186,6 +191,47 @@ def load_objective() -> dict[str, Any]:
         return dict(DEFAULT_OBJECTIVE)
     objective = payload.get("objective") if isinstance(payload, dict) else None
     return objective if isinstance(objective, dict) else dict(DEFAULT_OBJECTIVE)
+
+
+def compose_goal_target_time(
+    hours: object = None, minutes: object = None, seconds: object = None
+) -> str | None:
+    """Build the canonical target time from user-facing numeric components."""
+    values: list[int] = []
+    for value, label in (
+        (hours, "heures"),
+        (minutes, "minutes"),
+        (seconds, "secondes"),
+    ):
+        raw = str(value or "").strip()
+        if raw and not raw.isdigit():
+            raise ValueError(f"Le nombre de {label} doit être un entier positif.")
+        values.append(int(raw or 0))
+    parsed_hours, parsed_minutes, parsed_seconds = values
+    if parsed_hours > 99:
+        raise ValueError("Le nombre d’heures doit être compris entre 0 et 99.")
+    if parsed_minutes > 59:
+        raise ValueError("Le nombre de minutes doit être compris entre 0 et 59.")
+    if parsed_seconds > 59:
+        raise ValueError("Le nombre de secondes doit être compris entre 0 et 59.")
+    if not any(values):
+        return None
+    return f"{parsed_hours:02d}:{parsed_minutes:02d}:{parsed_seconds:02d}"
+
+
+def decompose_goal_target_time(value: object) -> dict[str, int]:
+    """Return editable components for an existing canonical target time."""
+    raw = str(value or "").strip()
+    if not raw:
+        return {"hours": 0, "minutes": 0, "seconds": 0}
+    match = re.fullmatch(r"(\d{2}):([0-5]\d):([0-5]\d)", raw)
+    if not match:
+        raise ValueError("Le temps objectif enregistré est invalide.")
+    return {
+        "hours": int(match.group(1)),
+        "minutes": int(match.group(2)),
+        "seconds": int(match.group(3)),
+    }
 
 
 def save_objective(payload: dict[str, Any]) -> dict[str, Any]:
@@ -924,6 +970,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     "ok": True,
                     "connected": stored_tokens_available(),
                     "setup": setup_status(),
+                    "historyImport": load_history_import(),
                 },
             )
             return
@@ -1146,12 +1193,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 email = str(body.get("email") or "").strip()
                 password = str(body.get("password") or "")
                 mfa_code = str(body.get("mfaCode") or "").strip()
+                history_scope = validate_scope(body.get("historyScope"))
                 if not email or not password:
                     raise ValueError("L’adresse e-mail et le mot de passe Garmin sont requis.")
                 client = authenticate_with_credentials(
                     email, password, mfa_code or None
                 )
                 persist_client_tokens(client)
+                history_import = initialize_history_import(history_scope)
                 update_garmin_setup("connected", message="Garmin connecté ✓")
                 started = start_initial_setup(current_user_id())
             except GarminMFARequiredError:
@@ -1186,6 +1235,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 {
                     "ok": True,
                     "started": started,
+                    "historyImport": history_import,
                     "message": "Garmin connecté. L’import démarre en arrière-plan.",
                 },
                 202,
@@ -1207,12 +1257,25 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     409,
                 )
                 return
+            try:
+                content_length = int(self.headers.get("Content-Length", "0"))
+                if content_length < 0 or content_length > 4_096:
+                    raise ValueError("Requête de reprise trop volumineuse.")
+                body = json.loads(self.rfile.read(content_length) or b"{}")
+                if not isinstance(body, dict):
+                    raise ValueError("Requête de reprise invalide.")
+                history_scope = validate_scope(body.get("historyScope"))
+                history_import = initialize_history_import(history_scope)
+            except (ValueError, TypeError, json.JSONDecodeError) as exc:
+                _json_response(self, {"ok": False, "message": str(exc)}, 400)
+                return
             started = start_initial_setup(current_user_id())
             _json_response(
                 self,
                 {
                     "ok": True,
                     "started": started,
+                    "historyImport": history_import,
                     "message": "Nouvelle tentative lancée sans reconnexion Garmin.",
                 },
                 202,

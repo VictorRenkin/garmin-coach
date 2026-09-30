@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+from datetime import date
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError
@@ -9,7 +10,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
 import pytest
 
-from garmin_coach import account_security, config, dashboard, user_accounts
+from garmin_coach import account_security, config, dashboard, history_import, user_accounts
 
 
 @pytest.fixture
@@ -98,7 +99,58 @@ def test_modern_garmin_connection_uses_only_authenticated_motionest_user(
             {
                 "email": "garmin@example.com",
                 "password": "garmin-password",
+                "historyScope": "6_months",
                 "user_id": "u_attacker",
+            },
+            cookie,
+        )
+        with urlopen(
+            Request(
+                f"http://127.0.0.1:{server.server_port}/api/garmin/setup-status",
+                headers={"Cookie": cookie},
+            ),
+            timeout=3,
+        ) as response:
+            setup_status_payload = json.loads(response.read())
+    finally:
+        server.shutdown()
+        thread.join(timeout=3)
+        server.server_close()
+
+    assert status == 202
+    assert payload["started"] is True
+    assert payload["historyImport"]["scope"] == "6_months"
+    assert payload["historyImport"]["page_size"] == 250
+    assert setup_status_payload["historyImport"]["scope"] == "6_months"
+    assert setup_status_payload["historyImport"]["activities_examined"] == 0
+    assert captured == {"persisted_for": user_id, "started_for": user_id}
+
+
+def test_garmin_connection_rejects_invalid_history_scope_before_authentication(
+    isolated_setup: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, password = _verified_ready_user(isolated_setup)
+    monkeypatch.setattr(
+        dashboard,
+        "authenticate_with_credentials",
+        lambda *args: (_ for _ in ()).throw(AssertionError("Garmin appelé")),
+    )
+    server = ThreadingHTTPServer(("127.0.0.1", 0), dashboard.DashboardHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        _, _, cookie = _post(
+            server.server_port,
+            "/api/account/login",
+            {"email": "runner@example.com", "password": password},
+        )
+        status, payload, _ = _post(
+            server.server_port,
+            "/api/garmin/connect",
+            {
+                "email": "garmin@example.com",
+                "password": "garmin-password",
+                "historyScope": "250_activities",
             },
             cookie,
         )
@@ -107,9 +159,9 @@ def test_modern_garmin_connection_uses_only_authenticated_motionest_user(
         thread.join(timeout=3)
         server.server_close()
 
-    assert status == 202
-    assert payload["started"] is True
-    assert captured == {"persisted_for": user_id, "started_for": user_id}
+    assert status == 400
+    assert payload["ok"] is False
+    assert "Période" in payload["message"]
 
 
 def test_dashboard_redirects_to_setup_until_plan_is_proposed(
@@ -144,3 +196,52 @@ def test_dashboard_redirects_to_setup_until_plan_is_proposed(
 
     assert error.value.code == 302
     assert error.value.headers["Location"] == "/connect-garmin"
+
+
+def test_setup_retry_preserves_the_original_history_reference_date(
+    isolated_setup: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user_id, password = _verified_ready_user(isolated_setup)
+    _write_tokens(isolated_setup, user_id)
+    onboarding_path = isolated_setup / "users" / user_id / "onboarding.json"
+    onboarding_path.write_text(
+        json.dumps(
+            {
+                "status": "ready",
+                "garmin_setup": {
+                    "status": "error",
+                    "retryable": True,
+                    "message": "Interrompu",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    with config.user_context(user_id):
+        history_import.initialize_history_import(
+            "2_years", reference_date=date(2026, 9, 30)
+        )
+    monkeypatch.setattr(dashboard, "start_initial_setup", lambda selected: True)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), dashboard.DashboardHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        _, _, cookie = _post(
+            server.server_port,
+            "/api/account/login",
+            {"email": "runner@example.com", "password": password},
+        )
+        status, payload, _ = _post(
+            server.server_port,
+            "/api/garmin/setup-retry",
+            {"historyScope": "2_years"},
+            cookie,
+        )
+    finally:
+        server.shutdown()
+        thread.join(timeout=3)
+        server.server_close()
+
+    assert status == 202
+    assert payload["historyImport"]["reference_date"] == "2026-09-30"
+    assert payload["historyImport"]["cutoff_date"] == "2024-09-30"

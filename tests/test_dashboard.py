@@ -133,7 +133,41 @@ def test_new_onboarding_has_no_visible_constraints_question() -> None:
     html = dashboard.TEMPLATE_FILE.read_text(encoding="utf-8")
 
     assert 'name="constraints"' not in html
-    assert 'name="goal_target_time"' in html
+    assert 'id="onboardingTargetHours"' in html
+    assert 'id="onboardingTargetMinutes"' in html
+    assert 'id="onboardingTargetSeconds"' in html
+    assert 'placeholder="01:30:00"' not in html
+
+
+@pytest.mark.parametrize(
+    ("parts", "expected"),
+    [
+        ((2, None, None), "02:00:00"),
+        ((3, 30, None), "03:30:00"),
+        ((1, 29, None), "01:29:00"),
+        ((None, 42, 30), "00:42:30"),
+        ((None, None, None), None),
+        ((0, 0, 0), None),
+    ],
+)
+def test_compose_goal_target_time(parts, expected) -> None:
+    assert dashboard.compose_goal_target_time(*parts) == expected
+
+
+@pytest.mark.parametrize("parts", [(1, 60, 0), (1, 0, 60)])
+def test_compose_goal_target_time_rejects_invalid_minutes_or_seconds(parts) -> None:
+    with pytest.raises(ValueError, match="compris entre 0 et 59"):
+        dashboard.compose_goal_target_time(*parts)
+
+
+def test_existing_target_time_is_decomposed_for_editing() -> None:
+    assert dashboard.decompose_goal_target_time("03:30:05") == {
+        "hours": 3,
+        "minutes": 30,
+        "seconds": 5,
+    }
+    html = dashboard.TEMPLATE_FILE.read_text(encoding="utf-8")
+    assert "setTargetTimeInputs('goalTarget',o.goal_target_time)" in html
 
 
 def test_save_objective_accepts_coaching_goal_without_race_distance(
