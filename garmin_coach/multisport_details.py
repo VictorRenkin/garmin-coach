@@ -9,6 +9,8 @@ import time
 import uuid
 from collections import Counter
 from collections.abc import Callable, Iterator
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -20,7 +22,12 @@ from garminconnect import (
     GarthException,
 )
 
-from .config import MULTISPORT_DETAILS_DIR, ensure_directories
+from .config import (
+    MULTISPORT_DETAILS_DIR,
+    current_user_id,
+    ensure_directories,
+    user_context,
+)
 from .history_import import load_history_import, update_history_import
 from .history_storage import (
     is_sensitive_metadata_key,
@@ -51,12 +58,149 @@ NONTERMINAL_STATUSES = {
 }
 ALL_STATUSES = TERMINAL_STATUSES | NONTERMINAL_STATUSES
 _WRITE_LOCK = threading.Lock()
+DEFAULT_DETAIL_WORKERS = 3
+DEFAULT_QUEUE_MULTIPLIER = 2
+MAX_DETAIL_WORKERS = 5
+DEFAULT_NETWORK_RETRIES = 2
 
 
 class DetailImportInterrupted(RuntimeError):
     def __init__(self, status: str) -> None:
         super().__init__(f"Import détaillé interrompu : {status}.")
         self.status = status
+
+
+class ConcurrentImportStopped(RuntimeError):
+    pass
+
+
+def configured_detail_workers() -> int:
+    raw = os.getenv("GARMIN_DETAIL_WORKERS", str(DEFAULT_DETAIL_WORKERS))
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError("GARMIN_DETAIL_WORKERS doit être un entier.") from exc
+    if not 1 <= value <= MAX_DETAIL_WORKERS:
+        raise ValueError("GARMIN_DETAIL_WORKERS doit être compris entre 1 et 5.")
+    return value
+
+
+def configured_detail_queue_size(worker_count: int) -> int:
+    raw = os.getenv("GARMIN_DETAIL_QUEUE_MULTIPLIER", str(DEFAULT_QUEUE_MULTIPLIER))
+    try:
+        multiplier = int(raw)
+    except ValueError as exc:
+        raise ValueError("GARMIN_DETAIL_QUEUE_MULTIPLIER doit être un entier.") from exc
+    if not 1 <= multiplier <= 10:
+        raise ValueError("GARMIN_DETAIL_QUEUE_MULTIPLIER doit être compris entre 1 et 10.")
+    return worker_count * multiplier
+
+
+def _retry_after(exc: BaseException) -> float | None:
+    value = getattr(exc, "retry_after", None)
+    response = getattr(exc, "response", None)
+    if value is None and response is not None:
+        value = getattr(response, "headers", {}).get("Retry-After")
+    try:
+        return max(0.0, float(value)) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+@dataclass
+class _ControllerMetrics:
+    peak_requests: int = 0
+    network_seconds: float = 0.0
+    rate_limit_pauses: int = 0
+    rate_limit_pause_seconds: float = 0.0
+    retries: int = 0
+    auth_stops: int = 0
+
+
+class GlobalRequestController:
+    """One adaptive request gate shared by every activity worker."""
+
+    def __init__(
+        self,
+        worker_count: int,
+        *,
+        monotonic: Callable[[], float] = time.monotonic,
+        sleeper: Callable[[float], None] = time.sleep,
+        backoff_base: float = 1.0,
+        backoff_cap: float = 60.0,
+    ) -> None:
+        self.worker_count = worker_count
+        self.effective_limit = worker_count
+        self.monotonic = monotonic
+        self.sleeper = sleeper
+        self.backoff_base = backoff_base
+        self.backoff_cap = backoff_cap
+        self.metrics = _ControllerMetrics()
+        self._condition = threading.Condition()
+        self._active = 0
+        self._paused_until = 0.0
+        self._rate_streak = 0
+        self._recovery_successes = 0
+        self._auth_stopped = False
+
+    @property
+    def auth_stopped(self) -> bool:
+        with self._condition:
+            return self._auth_stopped
+
+    def before_request(self) -> float:
+        while True:
+            with self._condition:
+                if self._auth_stopped:
+                    raise ConcurrentImportStopped("auth_failed")
+                delay = self._paused_until - self.monotonic()
+                if delay <= 0 and self._active < self.effective_limit:
+                    self._active += 1
+                    self.metrics.peak_requests = max(
+                        self.metrics.peak_requests, self._active
+                    )
+                    return self.monotonic()
+                self._condition.wait(
+                    timeout=min(max(delay if delay > 0 else 0.05, 0.001), 0.05)
+                )
+
+    def after_request(
+        self, started: float, status: str, retry_after: float | None = None
+    ) -> None:
+        with self._condition:
+            self._active = max(0, self._active - 1)
+            self.metrics.network_seconds += max(0.0, self.monotonic() - started)
+            if status == "rate_limited":
+                self._rate_streak += 1
+                delay = retry_after
+                if delay is None:
+                    delay = min(
+                        self.backoff_cap,
+                        self.backoff_base * (2 ** (self._rate_streak - 1)),
+                    )
+                new_until = self.monotonic() + delay
+                added = max(0.0, new_until - max(self._paused_until, self.monotonic()))
+                self._paused_until = max(self._paused_until, new_until)
+                self.effective_limit = 1
+                self._recovery_successes = 0
+                self.metrics.rate_limit_pauses += 1
+                self.metrics.rate_limit_pause_seconds += added
+            elif status == "auth_failed":
+                if not self._auth_stopped:
+                    self.metrics.auth_stops += 1
+                self._auth_stopped = True
+            elif status in TERMINAL_STATUSES:
+                self._rate_streak = 0
+                if self.effective_limit < self.worker_count:
+                    self._recovery_successes += 1
+                    if self._recovery_successes >= 5:
+                        self.effective_limit += 1
+                        self._recovery_successes = 0
+            self._condition.notify_all()
+
+    def record_retry(self) -> None:
+        with self._condition:
+            self.metrics.retries += 1
 
 
 def _iso(moment: datetime | None = None) -> str:
@@ -410,6 +554,7 @@ def fetch_activity_endpoints(
     clock: Callable[[], float] = time.perf_counter,
     now: datetime | None = None,
     on_checkpoint: Callable[[dict[str, Any]], None] | None = None,
+    request_controller: GlobalRequestController | None = None,
 ) -> dict[str, Any]:
     """Fetch incomplete endpoints for one activity, saving after every result."""
     activity_id = _activity_id(activity)
@@ -452,6 +597,9 @@ def fetch_activity_endpoints(
                 state["performance"]["calls_avoided_resume"] += 1
             continue
 
+        gate_started = (
+            request_controller.before_request() if request_controller else None
+        )
         attempted_at = _iso(now)
         endpoint["attempts"] += 1
         endpoint["first_attempt_at"] = endpoint.get("first_attempt_at") or attempted_at
@@ -470,6 +618,8 @@ def fetch_activity_endpoints(
             endpoint["data"] = sanitized
             endpoint["status"] = "empty" if _empty_response(sanitized) else "success"
             endpoint["completed_at"] = attempted_at
+            if request_controller and gate_started is not None:
+                request_controller.after_request(gate_started, endpoint["status"])
         except Exception as exc:
             endpoint["duration_seconds"] = round(max(0.0, clock() - call_started), 6)
             status, http_status, error_type = _failure_status(exc)
@@ -477,6 +627,10 @@ def fetch_activity_endpoints(
             endpoint["http_status"] = http_status
             endpoint["error_type"] = error_type
             endpoint["completed_at"] = attempted_at if status == "unsupported" else None
+            if request_controller and gate_started is not None:
+                request_controller.after_request(
+                    gate_started, status, _retry_after(exc)
+                )
 
         state["performance"]["approximate_data_bytes"] = sum(
             int(value.get("approximate_bytes") or 0) for value in endpoints.values()
@@ -607,12 +761,33 @@ def _history_progress_updates(progress: dict[str, Any]) -> dict[str, Any]:
 
 
 def import_multisport_details(
-    client: Any,
+    client: Any | None = None,
     *,
     clock: Callable[[], float] = time.perf_counter,
     now: datetime | None = None,
+    client_factory: Callable[[], Any] | None = None,
+    worker_count: int | None = None,
+    queue_size: int | None = None,
+    network_retries: int = DEFAULT_NETWORK_RETRIES,
+    controller: GlobalRequestController | None = None,
+    activity_source: Iterator[dict[str, Any]] | None = None,
+    allow_incomplete_pagination: bool = False,
 ) -> dict[str, Any]:
     """Import selected activities one by one and resume incomplete endpoints."""
+    if client_factory is not None:
+        return _import_multisport_details_concurrent(
+            client_factory,
+            clock=clock,
+            now=now,
+            worker_count=worker_count or configured_detail_workers(),
+            queue_size=queue_size,
+            network_retries=network_retries,
+            controller=controller,
+            activity_source=activity_source,
+            allow_incomplete_pagination=allow_incomplete_pagination,
+        )
+    if client is None:
+        raise ValueError("Un client Garmin ou une fabrique de clients est requis.")
     history = load_history_import(detect_stale=False)
     if not history.get("pagination_complete"):
         raise ValueError("La pagination des métadonnées doit être terminée.")
@@ -760,3 +935,206 @@ def import_multisport_details(
             now=now,
         )
         raise
+
+
+def _performance_totals(
+    history: dict[str, Any],
+) -> tuple[int, int, int, int]:
+    calls = avoided_not_applicable = avoided_resume = approximate_bytes = 0
+    for activity in _selected_metadata(history):
+        state = load_detail_state(_activity_id(activity))
+        performance = (state or {}).get("performance") or {}
+        calls += int(performance.get("network_calls") or 0)
+        avoided_not_applicable += int(
+            performance.get("calls_avoided_not_applicable") or 0
+        )
+        avoided_resume += int(performance.get("calls_avoided_resume") or 0)
+        approximate_bytes += int(performance.get("approximate_data_bytes") or 0)
+    return calls, avoided_not_applicable, avoided_resume, approximate_bytes
+
+
+def _import_multisport_details_concurrent(
+    client_factory: Callable[[], Any],
+    *,
+    clock: Callable[[], float],
+    now: datetime | None,
+    worker_count: int,
+    queue_size: int | None,
+    network_retries: int,
+    controller: GlobalRequestController | None,
+    activity_source: Iterator[dict[str, Any]] | None,
+    allow_incomplete_pagination: bool,
+) -> dict[str, Any]:
+    """Bounded activity-level concurrency with coordinator-only checkpoints."""
+    if not 1 <= worker_count <= MAX_DETAIL_WORKERS:
+        raise ValueError("worker_count doit être compris entre 1 et 5.")
+    if network_retries < 0 or network_retries > 10:
+        raise ValueError("network_retries doit être compris entre 0 et 10.")
+    capacity = queue_size or configured_detail_queue_size(worker_count)
+    if capacity < worker_count:
+        raise ValueError("La file doit pouvoir contenir au moins un travail par worker.")
+    user_id = current_user_id()
+    if not user_id:
+        raise ValueError("Contexte utilisateur explicite requis pour l'import concurrent.")
+
+    history = load_history_import(detect_stale=False)
+    if not history.get("pagination_complete") and not allow_incomplete_pagination:
+        raise ValueError("La pagination des métadonnées doit être terminée.")
+    request_gate = controller or GlobalRequestController(worker_count)
+    initial_calls, initial_na, initial_resume, _ = _performance_totals(history)
+    prior_timings = dict(history.get("timings") or {})
+    run_started = clock()
+    queue_wait_seconds = 0.0
+    peak_in_flight = 0
+    completed_tasks = 0
+    seen_ids: set[str] = set()
+    failures: list[str] = []
+    local = threading.local()
+    metric_lock = threading.Lock()
+
+    if not allow_incomplete_pagination:
+        update_history_import(
+            {
+                "status": "running",
+                "retryable": False,
+                "error": "",
+                **_history_progress_updates(_initial_progress(history)),
+            },
+            now=now,
+        )
+
+    def run_activity(activity: dict[str, Any], queued_at: float) -> dict[str, Any]:
+        nonlocal queue_wait_seconds
+        with user_context(user_id):
+            with metric_lock:
+                queue_wait_seconds += max(0.0, clock() - queued_at)
+            if not hasattr(local, "client"):
+                local.client = client_factory()
+            attempts = 0
+            while True:
+                if request_gate.auth_stopped:
+                    raise ConcurrentImportStopped("auth_failed")
+                try:
+                    return fetch_activity_endpoints(
+                        local.client,
+                        activity,
+                        clock=clock,
+                        now=now,
+                        request_controller=request_gate,
+                    )
+                except DetailImportInterrupted as exc:
+                    if exc.status == "auth_failed":
+                        raise
+                    if exc.status not in {"retry_pending", "rate_limited"}:
+                        raise
+                    if attempts >= network_retries:
+                        raise
+                    attempts += 1
+                    request_gate.record_retry()
+                    if exc.status == "retry_pending":
+                        time.sleep(min(0.1 * (2 ** (attempts - 1)), 1.0))
+
+    activities = activity_source or iter(_selected_metadata(history))
+    futures: dict[Future[dict[str, Any]], str] = {}
+    exhausted = False
+
+    def submit_available(executor: ThreadPoolExecutor) -> None:
+        nonlocal exhausted, peak_in_flight
+        while not exhausted and len(futures) < capacity and not request_gate.auth_stopped:
+            try:
+                activity = next(activities)
+            except StopIteration:
+                exhausted = True
+                break
+            activity_id = _activity_id(activity)
+            if activity_id in seen_ids:
+                continue
+            seen_ids.add(activity_id)
+            existing = load_detail_state(activity_id)
+            if existing and existing.get("complete"):
+                continue
+            future = executor.submit(run_activity, activity, clock())
+            futures[future] = activity_id
+            peak_in_flight = max(peak_in_flight, len(futures))
+
+    with ThreadPoolExecutor(
+        max_workers=worker_count, thread_name_prefix=f"garmin-details-{user_id}"
+    ) as executor:
+        submit_available(executor)
+        while futures:
+            done, _ = wait(tuple(futures), return_when=FIRST_COMPLETED)
+            for future in done:
+                futures.pop(future)
+                if future.cancelled():
+                    continue
+                try:
+                    future.result()
+                    completed_tasks += 1
+                except ConcurrentImportStopped:
+                    failures.append("auth_failed")
+                except DetailImportInterrupted as exc:
+                    failures.append(exc.status)
+                except Exception as exc:
+                    failures.append(type(exc).__name__)
+            if request_gate.auth_stopped:
+                for future in futures:
+                    future.cancel()
+            else:
+                submit_available(executor)
+
+    final_history = load_history_import(detect_stale=False)
+    progress = _initial_progress(final_history)
+    calls, avoided_na, avoided_resume, approximate_bytes = _performance_totals(
+        final_history
+    )
+    elapsed = max(0.0, clock() - run_started)
+    run_calls = max(0, calls - initial_calls)
+    endpoint_rate = run_calls / elapsed if elapsed else 0.0
+    activity_rate = completed_tasks / elapsed if elapsed else 0.0
+    metrics = request_gate.metrics
+    timings = dict(prior_timings)
+    timings.update(
+        details_seconds_total=round(
+            float(prior_timings.get("details_seconds_total") or 0.0) + elapsed, 6
+        ),
+        detail_wall_clock_seconds=round(elapsed, 6),
+        detail_network_seconds=round(metrics.network_seconds, 6),
+        detail_network_calls=calls,
+        detail_calls_avoided_not_applicable=avoided_na,
+        detail_calls_avoided_resume=avoided_resume,
+        detail_approximate_bytes=approximate_bytes,
+        detail_worker_count=worker_count,
+        detail_queue_capacity=capacity,
+        detail_peak_in_flight=peak_in_flight,
+        detail_peak_concurrency=metrics.peak_requests,
+        detail_queue_wait_seconds=round(queue_wait_seconds, 6),
+        detail_activities_per_second=round(activity_rate, 6),
+        detail_endpoints_per_second=round(endpoint_rate, 6),
+        detail_rate_limit_pauses=metrics.rate_limit_pauses,
+        detail_rate_limit_pause_seconds=round(metrics.rate_limit_pause_seconds, 6),
+        detail_retries=metrics.retries,
+        detail_auth_stops=metrics.auth_stops,
+    )
+    if failures:
+        error = "auth_failed" if request_gate.auth_stopped else failures[0]
+        state = update_history_import(
+            {
+                "status": "error",
+                "retryable": True,
+                "error": f"details_{error}",
+                "timings": timings,
+                **_history_progress_updates(progress),
+            },
+            now=now,
+        )
+        raise DetailImportInterrupted(error)
+    return update_history_import(
+        {
+            "status": "complete",
+            "retryable": False,
+            "error": "",
+            "timings": timings,
+            **_history_progress_updates(progress),
+        },
+        now=now,
+    )

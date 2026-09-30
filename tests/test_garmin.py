@@ -114,3 +114,35 @@ def test_embedded_429_is_reported_as_rate_limit(monkeypatch) -> None:
 
     with pytest.raises(GarminConnectTooManyRequestsError):
         garmin.authenticate_with_credentials("runner@example.com", "secret")
+
+
+def test_worker_client_factory_copies_tokens_but_not_http_session() -> None:
+    from garminconnect import Garmin
+    from garth.auth_tokens import OAuth1Token, OAuth2Token
+
+    primary = Garmin()
+    primary.garth.configure(
+        oauth1_token=OAuth1Token("one", "secret", domain="garmin.com"),
+        oauth2_token=OAuth2Token(
+            "scope",
+            "jti",
+            "bearer",
+            "access",
+            "refresh",
+            3600,
+            9999999999,
+            7200,
+            9999999999,
+        ),
+    )
+    factory = garmin.build_worker_client_factory(primary)
+    first = factory()
+    second = factory()
+
+    assert first is not second
+    assert first.garth is not second.garth
+    assert first.garth.sess is not second.garth.sess
+    assert first.garth.sess is not primary.garth.sess
+    assert first.garth.oauth1_token is not second.garth.oauth1_token
+    assert first.garth.oauth2_token is not second.garth.oauth2_token
+    assert first.garth.oauth2_token.access_token == "access"

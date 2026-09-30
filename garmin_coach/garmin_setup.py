@@ -2,14 +2,21 @@
 from __future__ import annotations
 
 import logging
+import queue
 import threading
 from collections.abc import Callable
 from typing import Any
 
 from .config import current_user_id, load_settings, user_context
-from .garmin import connect
+from .garmin import build_worker_client_factory, connect
 from .history_pagination import paginate_activity_history
-from .multisport_details import import_multisport_details
+from .history_import import load_history_import
+from .multisport_details import (
+    GlobalRequestController,
+    configured_detail_queue_size,
+    configured_detail_workers,
+    import_multisport_details,
+)
 from .onboarding import (
     inspect_garmin_account,
     load_onboarding,
@@ -44,6 +51,69 @@ def setup_status() -> dict[str, Any]:
     }
 
 
+def _stream_paginated_details(
+    user_id: str, client: Any, client_factory: Callable[[], Any]
+) -> dict[str, Any]:
+    """Apply backpressure while metadata pagination feeds detail workers."""
+    workers = configured_detail_workers()
+    total_capacity = configured_detail_queue_size(workers)
+    detail_capacity = max(workers, total_capacity - 1)
+    controller = GlobalRequestController(workers)
+    pending: queue.Queue[object] = queue.Queue(maxsize=1)
+    ready = threading.Event()
+    producer_done = threading.Event()
+    producer_errors: list[BaseException] = []
+
+    def publish(activity: dict[str, Any]) -> None:
+        ready.set()
+        while not controller.auth_stopped:
+            try:
+                pending.put(activity, timeout=0.05)
+                return
+            except queue.Full:
+                continue
+
+    def produce() -> None:
+        try:
+            with user_context(user_id):
+                paginate_activity_history(client, on_activity_persisted=publish)
+        except BaseException as exc:
+            producer_errors.append(exc)
+        finally:
+            ready.set()
+            producer_done.set()
+
+    producer = threading.Thread(
+        target=produce,
+        daemon=True,
+        name=f"garmin-pagination-{user_id}",
+    )
+    producer.start()
+    ready.wait()
+
+    def activities():
+        while True:
+            try:
+                yield pending.get(timeout=0.05)
+            except queue.Empty:
+                if producer_done.is_set():
+                    if producer_errors:
+                        raise producer_errors[0]
+                    return
+
+    try:
+        return import_multisport_details(
+            client_factory=client_factory,
+            worker_count=workers,
+            queue_size=detail_capacity,
+            controller=controller,
+            activity_source=activities(),
+            allow_incomplete_pagination=True,
+        )
+    finally:
+        producer.join()
+
+
 def run_initial_setup(user_id: str) -> None:
     """Importe, analyse et prépare un brouillon sans jamais le publier."""
     lock = _user_lock(user_id)
@@ -57,11 +127,32 @@ def run_initial_setup(user_id: str) -> None:
             try:
                 update_garmin_setup(step, message="Importation de tes activités…")
                 client = connect(settings)
-                paginate_activity_history(client)
-                update_garmin_setup(
-                    step, message="Importation des données sportives détaillées…"
+                # Real Garmin clients expose garth. The fallback keeps small
+                # injected test doubles compatible without weakening the
+                # production rule of one isolated HTTP session per worker.
+                worker_factory = (
+                    build_worker_client_factory(client)
+                    if hasattr(client, "garth")
+                    else None
                 )
-                import_multisport_details(client)
+                if worker_factory is None:
+                    paginate_activity_history(client)
+                    update_garmin_setup(
+                        step,
+                        message="Importation des données sportives détaillées…",
+                    )
+                    import_multisport_details(client)
+                else:
+                    update_garmin_setup(
+                        step,
+                        message="Importation des données sportives détaillées…",
+                    )
+                    if load_history_import(detect_stale=False).get(
+                        "pagination_complete"
+                    ):
+                        import_multisport_details(client_factory=worker_factory)
+                    else:
+                        _stream_paginated_details(user_id, client, worker_factory)
 
                 step = "analyzing"
                 update_garmin_setup(step, message="Analyse de ton historique…")

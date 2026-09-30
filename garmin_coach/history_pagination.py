@@ -5,6 +5,7 @@ import hashlib
 import json
 import re
 import time
+from collections.abc import Callable
 from datetime import date, datetime, timezone
 from typing import Any
 
@@ -85,6 +86,7 @@ def paginate_activity_history(
     *,
     clock: Any = time.perf_counter,
     now: datetime | None = None,
+    on_activity_persisted: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """Fetch all selected metadata sequentially and checkpoint after each page."""
     state = load_history_import(detect_stale=False)
@@ -153,6 +155,8 @@ def paginate_activity_history(
                     saved += 1
                 else:
                     existing += 1
+                if on_activity_persisted is not None:
+                    on_activity_persisted(activity)
             persist_seconds = max(0.0, clock() - persist_started)
 
             page_is_empty = not activities

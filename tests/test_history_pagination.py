@@ -131,6 +131,24 @@ def test_pagination_has_no_hidden_100_or_250_activity_limit(
     assert len(memory_metadata) == count
 
 
+def test_pagination_streams_each_persisted_activity_to_bounded_consumer(
+    isolated_history: Path, memory_metadata: set[str]
+) -> None:
+    initialize("u_stream", page_size=2)
+    observed: list[str] = []
+    client = FakeGarmin([activity(index) for index in range(5)])
+
+    with config.user_context("u_stream"):
+        state = history_pagination.paginate_activity_history(
+            client,
+            on_activity_persisted=lambda item: observed.append(str(item["activityId"])),
+        )
+
+    assert observed == [str(10_000 + index) for index in range(5)]
+    assert state["pagination_complete"] is True
+    assert len(memory_metadata) == 5
+
+
 @pytest.mark.parametrize("scope", ["3_months", "6_months", "1_year", "2_years", "all"])
 def test_selected_scope_is_applied_to_paginated_metadata(
     isolated_history: Path,

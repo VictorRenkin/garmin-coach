@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import getpass
+import copy
 import json
 import logging
 from collections.abc import Callable
+from dataclasses import asdict
 
 from garminconnect import (
     Garmin,
@@ -11,6 +13,7 @@ from garminconnect import (
     GarminConnectConnectionError,
     GarminConnectTooManyRequestsError,
 )
+from garth.auth_tokens import OAuth1Token, OAuth2Token
 
 from .config import Settings, TOKEN_DIR, ensure_directories
 
@@ -152,6 +155,32 @@ def persist_client_tokens(client: Garmin) -> None:
     """Enregistre les jetons dans l'espace utilisateur déjà authentifié."""
     ensure_directories()
     client.garth.dump(str(TOKEN_DIR))
+
+
+def build_worker_client_factory(client: Garmin) -> Callable[[], Garmin]:
+    """Build isolated Garmin clients from an authenticated in-memory session.
+
+    The returned factory never writes the copied tokens to disk. Each call
+    creates both a new ``Garmin`` object and a new garth/requests session.
+    """
+    oauth1 = getattr(client.garth, "oauth1_token", None)
+    oauth2 = getattr(client.garth, "oauth2_token", None)
+    if oauth1 is None or oauth2 is None:
+        raise ValueError("La session Garmin authentifiée ne contient pas ses jetons.")
+    oauth1_values = copy.deepcopy(asdict(oauth1))
+    oauth2_values = copy.deepcopy(asdict(oauth2))
+    domain = getattr(client.garth, "domain", None) or oauth1_values.get("domain")
+
+    def create() -> Garmin:
+        worker = Garmin(is_cn=domain == "garmin.cn")
+        worker.garth.configure(
+            oauth1_token=OAuth1Token(**copy.deepcopy(oauth1_values)),
+            oauth2_token=OAuth2Token(**copy.deepcopy(oauth2_values)),
+            domain=domain,
+        )
+        return worker
+
+    return create
 
 
 def connect_with_credentials(email: str, password: str) -> Garmin:
