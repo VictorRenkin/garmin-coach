@@ -80,6 +80,17 @@ class SportSummary(BaseModel):
     recent_duration_share_pct: float | None = Field(default=None, ge=0, le=100)
 
 
+class SportClassificationSummary(BaseModel):
+    total_activities: int = Field(ge=0)
+    garmin_explicit_count: int = Field(ge=0)
+    structured_mapping_count: int = Field(ge=0)
+    controlled_name_rule_count: int = Field(ge=0)
+    other_count: int = Field(ge=0)
+    unknown_count: int = Field(ge=0)
+    classified_count: int = Field(ge=0)
+    classification_ratio: float | None = Field(default=None, ge=0, le=1)
+
+
 class LongRunFact(BaseModel):
     date: str
     distance_km: float
@@ -108,6 +119,7 @@ class IntensityDistribution(BaseModel):
     heart_rate_zone_coverage: MetricCoverage
     aerobic_training_effect_counts: dict[str, int]
     aerobic_training_effect_coverage: MetricCoverage
+    anaerobic_training_effect_coverage: MetricCoverage
     details_used: int = Field(ge=0)
 
 
@@ -175,6 +187,7 @@ class TrainingHistorySummary(BaseModel):
     coverage: CoverageSummary
     windows: dict[str, WindowSummary]
     sports: list[SportSummary]
+    sport_classification: SportClassificationSummary
     running: RunningSummary
     cross_training: list[SportSummary]
     trends: TrendsSummary
@@ -229,32 +242,36 @@ def _raw_sport(activity: dict[str, Any]) -> str:
     return _slug(value)
 
 
-def normalize_sport(activity: dict[str, Any]) -> str:
-    """Conservative normalization based on explicit Garmin signals first."""
+def sport_classification(activity: dict[str, Any]) -> tuple[str, str]:
+    """Return the conservative sport and its non-sensitive classification source."""
     raw = _raw_sport(activity)
     if "run" in raw:
-        return "running"
+        return "running", "garmin_explicit" if raw == "running" else "structured_mapping"
     if any(marker in raw for marker in ("cycl", "bike", "biking")):
-        return "cycling"
+        return "cycling", "garmin_explicit" if raw == "cycling" else "structured_mapping"
     if "swim" in raw:
-        return "swimming"
+        return "swimming", "garmin_explicit" if raw == "swimming" else "structured_mapping"
     if "hiking" in raw or raw == "hike":
-        return "hiking"
+        return "hiking", "garmin_explicit" if raw == "hiking" else "structured_mapping"
     if "walk" in raw:
-        return "walking"
+        return "walking", "garmin_explicit" if raw == "walking" else "structured_mapping"
     if any(marker in raw for marker in ("strength", "weight_training")):
-        return "strength"
+        return "strength", "garmin_explicit" if raw == "strength" else "structured_mapping"
     if raw in {"padel", "tennis"}:
-        return raw
+        return raw, "garmin_explicit"
     if raw not in {"other", "unknown"}:
-        return raw
+        return raw, "garmin_explicit"
     # Garmin sometimes exposes racket sports as `other`. Only explicit sport
     # words are recognized; the free activity name is never copied downstream.
     name = _slug(activity.get("activityName"))
     for known in ("padel", "tennis"):
         if re.search(rf"(?:^|_){known}(?:_|$)", name):
-            return known
-    return raw
+            return known, "controlled_name_rule"
+    return raw, "unknown"
+
+
+def normalize_sport(activity: dict[str, Any]) -> str:
+    return sport_classification(activity)[0]
 
 
 def _distance_relevant(sport: str) -> bool:
@@ -314,7 +331,17 @@ def _window(
         if (value := _number(item, "elevationGain", "totalAscent")) is not None
         and value >= 0
     ]
-    hr_count = sum(_number(item, "averageHR", "averageHeartRate") is not None for item in selected)
+    average_hr_count = sum(
+        _number(item, "averageHR", "averageHeartRate") is not None for item in selected
+    )
+    max_hr_count = sum(
+        _number(item, "maxHR", "maxHeartRate") is not None for item in selected
+    )
+    any_hr_count = sum(
+        _number(item, "averageHR", "averageHeartRate", "maxHR", "maxHeartRate")
+        is not None
+        for item in selected
+    )
     loads = [
         value
         for item in selected
@@ -351,7 +378,10 @@ def _window(
                 distance_count, len(relevant), applicable=bool(relevant)
             ),
             "elevation_gain": _coverage(len(elevations), len(selected)),
-            "heart_rate": _coverage(hr_count, len(selected)),
+            "heart_rate": _coverage(any_hr_count, len(selected)),
+            "heart_rate_any": _coverage(any_hr_count, len(selected)),
+            "heart_rate_average": _coverage(average_hr_count, len(selected)),
+            "heart_rate_maximum": _coverage(max_hr_count, len(selected)),
             "training_load": _coverage(len(loads), len(selected)),
         },
     )
@@ -433,6 +463,7 @@ def _intensity(
     zone_activities = 0
     details_used = 0
     training_effects: list[float] = []
+    anaerobic_effects: list[float] = []
     for item in running:
         zones = _heart_rate_zones_from_metadata(item)
         if not zones and _number(item, "averageHR", "averageHeartRate") is not None:
@@ -448,6 +479,9 @@ def _intensity(
         effect = _number(item, "aerobicTrainingEffect")
         if effect is not None:
             training_effects.append(effect)
+        anaerobic_effect = _number(item, "anaerobicTrainingEffect")
+        if anaerobic_effect is not None:
+            anaerobic_effects.append(anaerobic_effect)
     zone_coverage = _coverage(zone_activities, len(running))
     effect_coverage = _coverage(len(training_effects), len(running))
     effect_counts = Counter()
@@ -475,7 +509,40 @@ def _intensity(
         heart_rate_zone_coverage=zone_coverage,
         aerobic_training_effect_counts=dict(sorted(effect_counts.items())),
         aerobic_training_effect_coverage=effect_coverage,
+        anaerobic_training_effect_coverage=_coverage(
+            len(anaerobic_effects), len(running)
+        ),
         details_used=details_used,
+    )
+
+
+def _sport_classification_summary(
+    activities: list[dict[str, Any]],
+) -> SportClassificationSummary:
+    sources = Counter()
+    other_count = 0
+    unknown_count = 0
+    for activity in activities:
+        sport, source = sport_classification(activity)
+        sources[source] += 1
+        other_count += sport == "other"
+        unknown_count += sport == "unknown"
+    classified = (
+        sources["garmin_explicit"]
+        + sources["structured_mapping"]
+        + sources["controlled_name_rule"]
+    )
+    return SportClassificationSummary(
+        total_activities=len(activities),
+        garmin_explicit_count=sources["garmin_explicit"],
+        structured_mapping_count=sources["structured_mapping"],
+        controlled_name_rule_count=sources["controlled_name_rule"],
+        other_count=other_count,
+        unknown_count=unknown_count,
+        classified_count=classified,
+        classification_ratio=(
+            round(classified / len(activities), 4) if activities else None
+        ),
     )
 
 
@@ -796,6 +863,7 @@ def build_training_history_summary(
         coverage=coverage,
         windows=windows,
         sports=sports,
+        sport_classification=_sport_classification_summary(activities),
         running=running,
         cross_training=[item for item in sports if item.sport != "running"],
         trends=_trends(activities, reference),
