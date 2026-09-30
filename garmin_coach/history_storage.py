@@ -21,6 +21,7 @@ _SENSITIVE_FRAGMENTS = (
     "latitude",
     "longitude",
     "coordinate",
+    "position",
     "polyline",
     "gps",
     "geolocation",
@@ -181,7 +182,7 @@ def iter_activity_history() -> Iterator[dict[str, Any]]:
     root = Path(os.fspath(ACTIVITY_HISTORY_DIR))
     if not root.is_dir():
         return
-    for path in root.glob("*.json"):
+    for path in sorted(root.glob("*.json"), key=lambda item: item.name):
         try:
             payload = _validate_metadata(
                 json.loads(path.read_text(encoding="utf-8")), path.stem

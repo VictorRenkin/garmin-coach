@@ -18,6 +18,11 @@ def test_initial_setup_runs_in_order_and_never_publishes(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         garmin_setup,
+        "import_multisport_details",
+        lambda *args, **kwargs: events.append("details") or {},
+    )
+    monkeypatch.setattr(
+        garmin_setup,
         "inspect_garmin_account",
         lambda *args, **kwargs: events.append("inspect") or {"garmin_summary": {}},
     )
@@ -43,6 +48,8 @@ def test_initial_setup_runs_in_order_and_never_publishes(monkeypatch) -> None:
         "importing",
         "connect",
         "paginate",
+        "importing",
+        "details",
         "analyzing",
         "inspect",
         "preparing_plan",
@@ -59,6 +66,7 @@ def test_ai_failure_is_retryable_without_garmin_reauthentication(monkeypatch) ->
     monkeypatch.setattr(garmin_setup, "load_settings", lambda: object())
     monkeypatch.setattr(garmin_setup, "connect", lambda settings: object())
     monkeypatch.setattr(garmin_setup, "paginate_activity_history", lambda *args, **kwargs: {})
+    monkeypatch.setattr(garmin_setup, "import_multisport_details", lambda *args, **kwargs: {})
     monkeypatch.setattr(
         garmin_setup,
         "inspect_garmin_account",
@@ -98,6 +106,7 @@ def test_reconnecting_legacy_complete_user_does_not_generate_new_plan(
     monkeypatch.setattr(garmin_setup, "load_onboarding", lambda: {"status": "complete"})
     monkeypatch.setattr(garmin_setup, "connect", lambda settings: object())
     monkeypatch.setattr(garmin_setup, "paginate_activity_history", lambda *args, **kwargs: {})
+    monkeypatch.setattr(garmin_setup, "import_multisport_details", lambda *args, **kwargs: {})
     monkeypatch.setattr(
         garmin_setup,
         "inspect_garmin_account",
@@ -117,7 +126,7 @@ def test_reconnecting_legacy_complete_user_does_not_generate_new_plan(
     garmin_setup.run_initial_setup("u_legacy")
 
     assert generated == []
-    assert statuses == ["importing", "analyzing", "complete"]
+    assert statuses == ["importing", "importing", "analyzing", "complete"]
 
 
 def test_initial_setup_no_longer_exposes_the_legacy_sync_once_limit() -> None:

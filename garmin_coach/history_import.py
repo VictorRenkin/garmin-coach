@@ -36,6 +36,14 @@ _FIELDS = {
     "activities_detail_complete",
     "activities_detail_pending",
     "activities_retrying",
+    "endpoints_success",
+    "endpoints_empty",
+    "endpoints_not_applicable",
+    "endpoints_unsupported",
+    "endpoints_retry_pending",
+    "endpoints_rate_limited",
+    "endpoints_auth_failed",
+    "endpoints_failed",
     "started_at",
     "updated_at",
     "heartbeat_at",
@@ -54,6 +62,14 @@ _COUNTERS = {
     "activities_detail_complete",
     "activities_detail_pending",
     "activities_retrying",
+    "endpoints_success",
+    "endpoints_empty",
+    "endpoints_not_applicable",
+    "endpoints_unsupported",
+    "endpoints_retry_pending",
+    "endpoints_rate_limited",
+    "endpoints_auth_failed",
+    "endpoints_failed",
 }
 
 
@@ -114,6 +130,14 @@ def _empty_state(*, status: str = "idle", error: str = "") -> dict[str, Any]:
         "activities_detail_complete": 0,
         "activities_detail_pending": 0,
         "activities_retrying": 0,
+        "endpoints_success": 0,
+        "endpoints_empty": 0,
+        "endpoints_not_applicable": 0,
+        "endpoints_unsupported": 0,
+        "endpoints_retry_pending": 0,
+        "endpoints_rate_limited": 0,
+        "endpoints_auth_failed": 0,
+        "endpoints_failed": 0,
         "started_at": None,
         "updated_at": None,
         "heartbeat_at": None,
@@ -132,6 +156,17 @@ def _validate_state(payload: object) -> dict[str, Any]:
     # Schema v1 existed before pagination. New checkpoint fields are optional
     # when reading those foundation files and are materialized on next write.
     state["metadata_existing"] = payload.get("metadata_existing", 0)
+    for field in (
+        "endpoints_success",
+        "endpoints_empty",
+        "endpoints_not_applicable",
+        "endpoints_unsupported",
+        "endpoints_retry_pending",
+        "endpoints_rate_limited",
+        "endpoints_auth_failed",
+        "endpoints_failed",
+    ):
+        state[field] = payload.get(field, 0)
     state["last_page_fingerprint"] = str(
         payload.get("last_page_fingerprint") or ""
     )

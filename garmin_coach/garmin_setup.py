@@ -9,6 +9,7 @@ from typing import Any
 from .config import current_user_id, load_settings, user_context
 from .garmin import connect
 from .history_pagination import paginate_activity_history
+from .multisport_details import import_multisport_details
 from .onboarding import (
     inspect_garmin_account,
     load_onboarding,
@@ -57,6 +58,10 @@ def run_initial_setup(user_id: str) -> None:
                 update_garmin_setup(step, message="Importation de tes activités…")
                 client = connect(settings)
                 paginate_activity_history(client)
+                update_garmin_setup(
+                    step, message="Importation des données sportives détaillées…"
+                )
+                import_multisport_details(client)
 
                 step = "analyzing"
                 update_garmin_setup(step, message="Analyse de ton historique…")
