@@ -67,6 +67,26 @@ def local_history_source() -> str:
     return "legacy"
 
 
+def local_history_scope() -> dict[str, str | None]:
+    """Expose the reader's selected source and frozen bounds."""
+    source = local_history_source()
+    state = load_history_import(detect_stale=False)
+    return {
+        "source": source,
+        "scope": str(state.get("scope")) if source == "multisport" else None,
+        "reference_date": (
+            str(state.get("reference_date"))
+            if source == "multisport" and state.get("reference_date")
+            else None
+        ),
+        "cutoff_date": (
+            str(state.get("cutoff_date"))
+            if source == "multisport" and state.get("cutoff_date")
+            else None
+        ),
+    }
+
+
 def _scope_bounds(source: str) -> tuple[date | None, date | None]:
     if source != "multisport":
         return None, None
@@ -81,6 +101,7 @@ def iter_local_activity_history(
     start_date: date | datetime | str | None = None,
     end_date: date | datetime | str | None = None,
     sport_types: Iterable[str] | None = None,
+    diagnostics: dict[str, int] | None = None,
 ) -> Iterator[dict[str, Any]]:
     """Yield sanitized metadata chronologically within the frozen import scope.
 
@@ -106,6 +127,10 @@ def iter_local_activity_history(
     )
     activities: list[tuple[datetime, str, dict[str, Any]]] = []
     for raw in raw_activities:
+        if diagnostics is not None:
+            diagnostics["metadata_files_read"] = (
+                diagnostics.get("metadata_files_read", 0) + 1
+            )
         sanitized = sanitize_activity_metadata(raw)
         if not isinstance(sanitized, dict):
             continue
@@ -144,6 +169,11 @@ def load_recent_local_activities(limit: int = 20) -> list[dict[str, Any]]:
     return activities[-limit:]
 
 
+def load_local_activity_details(activity_id: str | int) -> dict[str, Any] | None:
+    """Load a detail state on demand; callers must already hold in-scope metadata."""
+    return load_detail_state(activity_id)
+
+
 def load_local_activity_with_details(
     activity_id: str | int,
 ) -> dict[str, Any] | None:
@@ -159,4 +189,4 @@ def load_local_activity_with_details(
     )
     if metadata is None:
         return None
-    return {"metadata": metadata, "details": load_detail_state(expected)}
+    return {"metadata": metadata, "details": load_local_activity_details(expected)}
