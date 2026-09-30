@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import re
+import unicodedata
 from pathlib import Path
 from typing import Any, Literal
 
@@ -86,6 +88,33 @@ def _number(activity: dict[str, Any], key: str) -> float | None:
     return round(float(value), 2) if isinstance(value, (int, float)) else None
 
 
+def _sport_for_ai(activity: dict[str, Any]) -> str:
+    """Expose a bounded sport label without names, locations or identifiers."""
+    activity_type = activity.get("activityType")
+    raw = (
+        activity_type.get("typeKey")
+        if isinstance(activity_type, dict)
+        else activity_type or activity.get("activityTypeDTO")
+    )
+    sport = str(raw or "unknown").strip().lower()
+    safe_sport = re.sub(r"[^a-z0-9_-]", "", sport)[:64] or "unknown"
+    if safe_sport not in {"other", "unknown"}:
+        return safe_sport
+    # Garmin can expose racket sports as `other`. Recognize only explicit names;
+    # every other unknown sport keeps Garmin's generic label.
+    name = "".join(
+        character
+        for character in unicodedata.normalize(
+            "NFKD", str(activity.get("activityName") or "").lower()
+        )
+        if not unicodedata.combining(character)
+    )
+    for known in ("padel", "tennis"):
+        if re.search(rf"\b{known}\b", name):
+            return known
+    return safe_sport
+
+
 def _sanitized_metrics(activity: dict[str, Any]) -> dict[str, Any]:
     distance_m = _number(activity, "distance")
     duration_s = (
@@ -97,6 +126,7 @@ def _sanitized_metrics(activity: dict[str, Any]) -> dict[str, Any]:
     if distance_m and duration_s and distance_m > 0:
         pace_seconds = round(duration_s / (distance_m / 1000))
     return {
+        "sport": _sport_for_ai(activity),
         "date": str(activity.get("startTimeLocal") or "")[:10],
         "distance_km": round(distance_m / 1000, 2) if distance_m is not None else None,
         "duree_secondes": round(duration_s) if duration_s is not None else None,

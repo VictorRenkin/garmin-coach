@@ -8,8 +8,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from .config import ONBOARDING_FILE, ensure_directories
-from .history_import import load_history_import
-from .history_storage import iter_activity_history
+from .local_activity_history import iter_local_activity_history
 from .summary import is_running
 
 
@@ -152,7 +151,7 @@ def _training_type_counts(items: list[dict[str, Any]]) -> Counter[str]:
 def inspect_garmin_account(
     client: Any, *, force: bool = False, preserve_status: bool = False
 ) -> dict[str, Any]:
-    """Inventorie une fois l'historique et les séances sans stocker d'identifiants."""
+    """Inventorie l'historique local sans nouvel appel Garmin."""
     existing = load_onboarding()
     if not force and existing.get("status") in {
         "needs_profile",
@@ -163,49 +162,10 @@ def inspect_garmin_account(
     }:
         return existing
 
-    history_state = load_history_import(detect_stale=False)
-    if history_state.get("reference_date"):
-        reference_day = datetime.fromisoformat(
-            str(history_state["reference_date"])
-        ).date()
-        cutoff_day = (
-            datetime.fromisoformat(str(history_state["cutoff_date"])).date()
-            if history_state.get("cutoff_date")
-            else None
-        )
-
-        def activity_source():
-            for item in iter_activity_history():
-                item_time = _activity_date(item)
-                if cutoff_day is None:
-                    yield item
-                elif (
-                    item_time is not None
-                    and cutoff_day <= item_time.date() <= reference_day
-                ):
-                    yield item
-    else:
-        # Compatibility for direct/legacy inspection outside the initial
-        # pipeline. The first-use path always has an initialized local history.
-        activities = client.get_activities(0, 100)
-        valid_fallback = [item for item in activities if isinstance(item, dict)]
-        activity_source = lambda: iter(valid_fallback)
-    try:
-        workouts = client.get_workouts(0, 100)
-    except Exception:
-        workouts = []
-    running_workouts = [
-        item
-        for item in workouts
-        if isinstance(item, dict)
-        and str((item.get("sportType") or {}).get("sportTypeKey") or item.get("sportTypeKey") or "").lower()
-        in {"running", "run"}
-    ]
-    names = [
-        str(item.get("workoutName") or item.get("name") or "").strip()
-        for item in running_workouts
-    ]
-    type_counts = _training_type_counts(running_workouts)
+    del client  # Kept in the public signature for setup-call compatibility.
+    activities = list(iter_local_activity_history())
+    names: list[str] = []
+    type_counts: Counter[str] = Counter()
     activity_count = 0
     run_count = 0
     distance_count = 0
@@ -213,7 +173,7 @@ def inspect_garmin_account(
     distance_maximum: float | None = None
     sports: Counter[str] = Counter()
     latest_date: datetime | None = None
-    for item in activity_source():
+    for item in activities:
         activity_count += 1
         sports[_sport(item)] += 1
         activity_day = _activity_date(item)
@@ -225,6 +185,9 @@ def inspect_garmin_account(
             continue
         run_count += 1
         type_counts.update(_training_type_counts([item]))
+        name = str(item.get("activityName") or item.get("name") or "").strip()
+        if name and len(names) < 8:
+            names.append(name)
         distance = _distance_km(item)
         if distance is not None:
             distance_count += 1
@@ -239,7 +202,7 @@ def inspect_garmin_account(
     recent_count = 0
     recent_weeks: set[tuple[int, int]] = set()
     if recent_cutoff:
-        for item in activity_source():
+        for item in activities:
             activity_day = _activity_date(item)
             if activity_day is not None and activity_day >= recent_cutoff:
                 recent_count += 1
@@ -251,14 +214,14 @@ def inspect_garmin_account(
     summary = {
         "activites_trouvees": activity_count,
         "courses_trouvees": run_count,
-        "seances_course_garmin_trouvees": len(running_workouts),
+        "seances_course_garmin_trouvees": 0,
         "distance_moyenne_km": round(distance_total / distance_count, 1)
         if distance_count
         else None,
         "distance_maximale_km": distance_maximum,
         "types_detectes": logic,
         "types_entrainement_detectes": dict(type_counts.most_common()),
-        "logique_detectee": bool(len(logic) >= 2 or len(running_workouts) >= 3),
+        "logique_detectee": bool(len(logic) >= 2),
         "sports_detectes": dict(sports.most_common()),
         "frequence_hebdomadaire_recente": weekly_frequency,
         "semaines_actives_sur_4": active_weeks,

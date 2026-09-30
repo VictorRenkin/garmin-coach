@@ -4,36 +4,33 @@ from garmin_coach import onboarding
 class FakeGarmin:
     def __init__(self) -> None:
         self.activity_calls = 0
+        self.workout_calls = 0
 
     def get_activities(self, start, limit):
         self.activity_calls += 1
-        return [
-            {
-                "activityType": {"typeKey": "running"},
-                "distance": 5000,
-            },
-            {
-                "activityType": {"typeKey": "running"},
-                "distance": 10000,
-            },
-        ]
+        raise AssertionError("L'inspection ne doit pas appeler Garmin")
 
     def get_workouts(self, start, limit):
-        return [
-            {
-                "workoutName": "Easy endurance",
-                "sportType": {"sportTypeKey": "running"},
-            },
-            {
-                "workoutName": "Tempo threshold",
-                "sportType": {"sportTypeKey": "running"},
-            },
-        ]
+        self.workout_calls += 1
+        raise AssertionError("L'inspection ne doit pas appeler Garmin")
 
 
-def test_first_connection_inspects_history_and_workouts_once(tmp_path, monkeypatch) -> None:
+RUNS = [
+    {"activityType": {"typeKey": "running"}, "activityName": "Easy endurance", "distance": 5000},
+    {"activityType": {"typeKey": "running"}, "activityName": "Tempo threshold", "distance": 10000},
+]
+
+
+def local_history(monkeypatch, activities) -> None:
+    monkeypatch.setattr(
+        onboarding, "iter_local_activity_history", lambda: iter(activities)
+    )
+
+
+def test_first_connection_inspects_local_history_without_network(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(onboarding, "ONBOARDING_FILE", tmp_path / "onboarding.json")
     monkeypatch.setattr(onboarding, "ensure_directories", lambda: None)
+    local_history(monkeypatch, RUNS)
     client = FakeGarmin()
 
     state = onboarding.inspect_garmin_account(client)
@@ -45,7 +42,8 @@ def test_first_connection_inspects_history_and_workouts_once(tmp_path, monkeypat
     assert state["garmin_summary"]["distance_moyenne_km"] == 7.5
     assert state["garmin_summary"]["types_detectes"] == ["endurance", "tempo"]
     assert again == state
-    assert client.activity_calls == 1
+    assert client.activity_calls == 0
+    assert client.workout_calls == 0
 
 
 def test_profile_then_plan_confirmation_controls_publication(tmp_path, monkeypatch) -> None:
@@ -101,6 +99,7 @@ def test_forced_inspection_preserves_completed_questionnaire(tmp_path, monkeypat
 def test_onboarding_prompt_mentions_detected_structure(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(onboarding, "ONBOARDING_FILE", tmp_path / "onboarding.json")
     monkeypatch.setattr(onboarding, "ensure_directories", lambda: None)
+    local_history(monkeypatch, RUNS)
     state = onboarding.inspect_garmin_account(FakeGarmin())
 
     prompt = onboarding.onboarding_prompt(state)
@@ -114,16 +113,15 @@ def test_onboarding_detects_multisport_regularity_and_intervals(tmp_path, monkey
     monkeypatch.setattr(onboarding, "ONBOARDING_FILE", tmp_path / "onboarding.json")
     monkeypatch.setattr(onboarding, "ensure_directories", lambda: None)
 
-    class MultisportGarmin(FakeGarmin):
-        def get_activities(self, start, limit):
-            return [
-                {"activityType": {"typeKey": "running"}, "activityName": "Easy run", "startTimeLocal": "2026-07-01T08:00:00"},
-                {"activityType": {"typeKey": "lap_swimming"}, "activityName": "Pool swim", "startTimeLocal": "2026-07-08T08:00:00"},
-                {"activityType": {"typeKey": "running"}, "activityName": "6 x 400 interval", "startTimeLocal": "2026-07-15T08:00:00"},
-                {"activityType": {"typeKey": "cycling"}, "activityName": "Bike", "startTimeLocal": "2026-07-22T08:00:00"},
-            ]
+    activities = [
+        {"activityType": {"typeKey": "running"}, "activityName": "Easy run", "startTimeLocal": "2026-07-01T08:00:00"},
+        {"activityType": {"typeKey": "lap_swimming"}, "activityName": "Pool swim", "startTimeLocal": "2026-07-08T08:00:00"},
+        {"activityType": {"typeKey": "running"}, "activityName": "6 x 400 interval", "startTimeLocal": "2026-07-15T08:00:00"},
+        {"activityType": {"typeKey": "cycling"}, "activityName": "Bike", "startTimeLocal": "2026-07-22T08:00:00"},
+    ]
+    local_history(monkeypatch, activities)
 
-    state = onboarding.inspect_garmin_account(MultisportGarmin())
+    state = onboarding.inspect_garmin_account(FakeGarmin())
     summary = state["garmin_summary"]
 
     assert summary["sports_detectes"] == {"course": 2, "natation": 1, "vélo": 1}
@@ -138,22 +136,16 @@ def test_onboarding_translates_other_and_recognizes_garmin_abbreviations(
     monkeypatch.setattr(onboarding, "ONBOARDING_FILE", tmp_path / "onboarding.json")
     monkeypatch.setattr(onboarding, "ensure_directories", lambda: None)
 
-    class AbbreviatedGarmin(FakeGarmin):
-        def get_activities(self, start, limit):
-            return [
-                {"activityType": {"typeKey": "running"}, "activityName": "Course a pied"},
-                {"activityType": {"typeKey": "other"}, "activityName": "Other"},
-            ]
+    activities = [
+        {"activityType": {"typeKey": "running"}, "activityName": "GC 1908 INT"},
+        {"activityType": {"typeKey": "running"}, "activityName": "GC 2308 SL"},
+        {"activityType": {"typeKey": "running"}, "activityName": "GC 1708 REC"},
+        {"activityType": {"typeKey": "running"}, "activityName": "GC 0608 EF"},
+        {"activityType": {"typeKey": "other"}, "activityName": "Other"},
+    ]
+    local_history(monkeypatch, activities)
 
-        def get_workouts(self, start, limit):
-            return [
-                {"workoutName": "GC 1908 INT", "sportType": {"sportTypeKey": "running"}},
-                {"workoutName": "GC 2308 SL", "sportType": {"sportTypeKey": "running"}},
-                {"workoutName": "GC 1708 REC", "sportType": {"sportTypeKey": "running"}},
-                {"workoutName": "GC 0608 EF", "sportType": {"sportTypeKey": "running"}},
-            ]
-
-    summary = onboarding.inspect_garmin_account(AbbreviatedGarmin())["garmin_summary"]
+    summary = onboarding.inspect_garmin_account(FakeGarmin())["garmin_summary"]
 
     assert "other" not in summary["sports_detectes"]
     assert summary["sports_detectes"]["autres activités"] == 1

@@ -11,6 +11,7 @@ from .ai_provider import structured_completion
 from .ai_analysis import MissingOpenAIKeyError, _sanitized_metrics, load_analysis
 from .config import PLANS_DIR, PROFILE_FILE, Settings, ensure_directories
 from .coach_chat import list_messages
+from .local_activity_history import load_recent_local_activities
 from .storage import load_activities
 
 
@@ -453,11 +454,14 @@ def generate_initial_plan(settings: Settings, onboarding: dict[str, Any]) -> Pat
     week_start = monday_of(date.today()) + timedelta(days=7)
     offsets = _session_offsets(count, objective.get("availableDays"))
     required_dates = [(week_start + timedelta(days=day)).isoformat() for day in offsets]
-    activities = load_activities()
+    # Temporary bounded context: the 20 newest in-scope activities across every
+    # sport. Metadata comes from the local multisport import; detail files stay
+    # unopened here because the current AI contract only needs summary metrics.
+    activities = load_recent_local_activities(limit=20)
     payload = {
         "objectif_confirme": objective,
         "inventaire_garmin": onboarding.get("garmin_summary"),
-        "historique_recent": [_sanitized_metrics(item) for item in activities[-20:]],
+        "historique_recent": [_sanitized_metrics(item) for item in activities],
         "retours_conversation": [
             {"role": item.get("role"), "content": item.get("content")}
             for item in list_messages()[-30:]

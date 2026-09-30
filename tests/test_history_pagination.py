@@ -393,7 +393,7 @@ def test_inspection_streams_local_history_without_second_garmin_activity_call(
             raise AssertionError("L’inspection ne doit plus rappeler get_activities")
 
         def get_workouts(self, start, limit):
-            return []
+            raise AssertionError("L’inspection locale ne doit rappeler aucun endpoint Garmin")
 
     with config.user_context(user_id):
         state = onboarding.inspect_garmin_account(WorkoutsOnly(), force=True)
