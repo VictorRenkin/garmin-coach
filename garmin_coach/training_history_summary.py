@@ -76,6 +76,7 @@ class SportSummary(BaseModel):
     distance_relevant: bool
     training_load: ObservedMetricAggregate
     last_activity_date: str
+    observed_duration_last_84_days_seconds: float | None = Field(default=None, ge=0)
     recent_activity_share_pct: float = Field(ge=0, le=100)
     recent_duration_share_pct: float | None = Field(default=None, ge=0, le=100)
 
@@ -711,6 +712,11 @@ def _sport_summaries(
                 distance_relevant=relevant,
                 training_load=_aggregate_metric(loads, len(items)),
                 last_activity_date=last_day.isoformat(),
+                observed_duration_last_84_days_seconds=(
+                    round(recent_durations[sport], 2)
+                    if sport in recent_durations
+                    else None
+                ),
                 recent_activity_share_pct=round(recent_counts[sport] / len(recent) * 100, 2) if recent else 0.0,
                 recent_duration_share_pct=(
                     round(recent_durations[sport] / total_recent_duration * 100, 2)
