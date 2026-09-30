@@ -8,13 +8,13 @@ from typing import Any
 
 from .config import current_user_id, load_settings, user_context
 from .garmin import connect
+from .history_pagination import paginate_activity_history
 from .onboarding import (
     inspect_garmin_account,
     load_onboarding,
     mark_plan_proposed,
     update_garmin_setup,
 )
-from .sync import sync_once
 from .training_cycle import generate_initial_plan
 
 
@@ -56,7 +56,7 @@ def run_initial_setup(user_id: str) -> None:
             try:
                 update_garmin_setup(step, message="Importation de tes activités…")
                 client = connect(settings)
-                sync_once(client, settings=settings, limit=100)
+                paginate_activity_history(client)
 
                 step = "analyzing"
                 update_garmin_setup(step, message="Analyse de ton historique…")

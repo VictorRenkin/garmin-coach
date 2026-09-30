@@ -78,6 +78,7 @@ DATA_DIR = _UserPath("")
 ACTIVITIES_DIR = _UserPath("activities")
 ANALYSES_DIR = _UserPath("analyses")
 ACTIVITY_DETAILS_DIR = _UserPath("activity_details")
+ACTIVITY_HISTORY_DIR = _UserPath("activity_history")
 PLANS_DIR = _UserPath("plans")
 REPORTS_DIR = _UserPath("reports")
 STATE_FILE = _UserPath("state.json")
@@ -156,6 +157,7 @@ def ensure_directories() -> None:
         _user_root(),
         ACTIVITIES_DIR,
         ACTIVITY_DETAILS_DIR,
+        ACTIVITY_HISTORY_DIR,
         ANALYSES_DIR,
         PLANS_DIR,
         REPORTS_DIR,

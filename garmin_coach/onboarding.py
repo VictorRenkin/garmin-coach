@@ -8,6 +8,8 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from .config import ONBOARDING_FILE, ensure_directories
+from .history_import import load_history_import
+from .history_storage import iter_activity_history
 from .summary import is_running
 
 
@@ -161,9 +163,33 @@ def inspect_garmin_account(
     }:
         return existing
 
-    activities = client.get_activities(0, 100)
-    valid_activities = [item for item in activities if isinstance(item, dict)]
-    runs = [item for item in valid_activities if is_running(item)]
+    history_state = load_history_import(detect_stale=False)
+    if history_state.get("reference_date"):
+        reference_day = datetime.fromisoformat(
+            str(history_state["reference_date"])
+        ).date()
+        cutoff_day = (
+            datetime.fromisoformat(str(history_state["cutoff_date"])).date()
+            if history_state.get("cutoff_date")
+            else None
+        )
+
+        def activity_source():
+            for item in iter_activity_history():
+                item_time = _activity_date(item)
+                if cutoff_day is None:
+                    yield item
+                elif (
+                    item_time is not None
+                    and cutoff_day <= item_time.date() <= reference_day
+                ):
+                    yield item
+    else:
+        # Compatibility for direct/legacy inspection outside the initial
+        # pipeline. The first-use path always has an initialized local history.
+        activities = client.get_activities(0, 100)
+        valid_fallback = [item for item in activities if isinstance(item, dict)]
+        activity_source = lambda: iter(valid_fallback)
     try:
         workouts = client.get_workouts(0, 100)
     except Exception:
@@ -175,26 +201,61 @@ def inspect_garmin_account(
         and str((item.get("sportType") or {}).get("sportTypeKey") or item.get("sportTypeKey") or "").lower()
         in {"running", "run"}
     ]
-    distances = [value for item in runs if (value := _distance_km(item)) is not None]
     names = [
         str(item.get("workoutName") or item.get("name") or "").strip()
         for item in running_workouts
     ]
-    type_counts = _training_type_counts(running_workouts + runs)
+    type_counts = _training_type_counts(running_workouts)
+    activity_count = 0
+    run_count = 0
+    distance_count = 0
+    distance_total = 0.0
+    distance_maximum: float | None = None
+    sports: Counter[str] = Counter()
+    latest_date: datetime | None = None
+    for item in activity_source():
+        activity_count += 1
+        sports[_sport(item)] += 1
+        activity_day = _activity_date(item)
+        if activity_day is not None and (
+            latest_date is None or activity_day > latest_date
+        ):
+            latest_date = activity_day
+        if not is_running(item):
+            continue
+        run_count += 1
+        type_counts.update(_training_type_counts([item]))
+        distance = _distance_km(item)
+        if distance is not None:
+            distance_count += 1
+            distance_total += distance
+            distance_maximum = (
+                distance
+                if distance_maximum is None
+                else max(distance_maximum, distance)
+            )
     logic = [label for label, _ in type_counts.most_common()]
-    sports = Counter(_sport(item) for item in valid_activities)
-    dated = sorted(value for item in valid_activities if (value := _activity_date(item)))
-    recent_cutoff = dated[-1] - timedelta(days=27) if dated else None
-    recent = [value for value in dated if recent_cutoff and value >= recent_cutoff]
-    active_weeks = len({value.isocalendar()[:2] for value in recent})
-    weekly_frequency = round(len(recent) / 4, 1) if recent else None
-    regular = bool(len(recent) >= 4 and active_weeks >= 3)
+    recent_cutoff = latest_date - timedelta(days=27) if latest_date else None
+    recent_count = 0
+    recent_weeks: set[tuple[int, int]] = set()
+    if recent_cutoff:
+        for item in activity_source():
+            activity_day = _activity_date(item)
+            if activity_day is not None and activity_day >= recent_cutoff:
+                recent_count += 1
+                iso = activity_day.isocalendar()
+                recent_weeks.add((iso.year, iso.week))
+    active_weeks = len(recent_weeks)
+    weekly_frequency = round(recent_count / 4, 1) if recent_count else None
+    regular = bool(recent_count >= 4 and active_weeks >= 3)
     summary = {
-        "activites_trouvees": len(valid_activities),
-        "courses_trouvees": len(runs),
+        "activites_trouvees": activity_count,
+        "courses_trouvees": run_count,
         "seances_course_garmin_trouvees": len(running_workouts),
-        "distance_moyenne_km": round(sum(distances) / len(distances), 1) if distances else None,
-        "distance_maximale_km": max(distances, default=None),
+        "distance_moyenne_km": round(distance_total / distance_count, 1)
+        if distance_count
+        else None,
+        "distance_maximale_km": distance_maximum,
         "types_detectes": logic,
         "types_entrainement_detectes": dict(type_counts.most_common()),
         "logique_detectee": bool(len(logic) >= 2 or len(running_workouts) >= 3),

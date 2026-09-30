@@ -32,6 +32,7 @@ _FIELDS = {
     "pages_examined",
     "activities_examined",
     "metadata_saved",
+    "metadata_existing",
     "activities_detail_complete",
     "activities_detail_pending",
     "activities_retrying",
@@ -41,12 +42,15 @@ _FIELDS = {
     "timings",
     "retryable",
     "error",
+    "last_page_fingerprint",
+    "resume_anchor_ids",
 }
 _COUNTERS = {
     "next_offset",
     "pages_examined",
     "activities_examined",
     "metadata_saved",
+    "metadata_existing",
     "activities_detail_complete",
     "activities_detail_pending",
     "activities_retrying",
@@ -106,6 +110,7 @@ def _empty_state(*, status: str = "idle", error: str = "") -> dict[str, Any]:
         "pages_examined": 0,
         "activities_examined": 0,
         "metadata_saved": 0,
+        "metadata_existing": 0,
         "activities_detail_complete": 0,
         "activities_detail_pending": 0,
         "activities_retrying": 0,
@@ -115,6 +120,8 @@ def _empty_state(*, status: str = "idle", error: str = "") -> dict[str, Any]:
         "timings": {},
         "retryable": status in {"interrupted", "error"},
         "error": error,
+        "last_page_fingerprint": "",
+        "resume_anchor_ids": [],
     }
 
 
@@ -122,6 +129,13 @@ def _validate_state(payload: object) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("État d’import invalide.")
     state = {key: payload.get(key) for key in _FIELDS}
+    # Schema v1 existed before pagination. New checkpoint fields are optional
+    # when reading those foundation files and are materialized on next write.
+    state["metadata_existing"] = payload.get("metadata_existing", 0)
+    state["last_page_fingerprint"] = str(
+        payload.get("last_page_fingerprint") or ""
+    )
+    state["resume_anchor_ids"] = payload.get("resume_anchor_ids") or []
     if state["schema_version"] != SCHEMA_VERSION:
         raise ValueError("Version d’état d’import inconnue.")
     if state["status"] not in VALID_STATUSES:
@@ -138,6 +152,10 @@ def _validate_state(payload: object) -> dict[str, Any]:
         raise ValueError("Mesures temporelles invalides.")
     if not isinstance(state["retryable"], bool):
         raise ValueError("État de reprise invalide.")
+    if not isinstance(state["resume_anchor_ids"], list) or any(
+        not isinstance(value, str) for value in state["resume_anchor_ids"]
+    ):
+        raise ValueError("Ancres de reprise invalides.")
     for field in ("reference_date", "cutoff_date"):
         if state[field] is not None:
             date.fromisoformat(str(state[field]))
@@ -205,6 +223,22 @@ def resume_history_import(*, now: datetime | None = None) -> dict[str, Any]:
         retryable=False,
         error="",
     )
+    return _atomic_write(state)
+
+
+def update_history_import(
+    updates: dict[str, Any], *, now: datetime | None = None
+) -> dict[str, Any]:
+    """Atomically checkpoint validated pagination fields."""
+    unknown = set(updates) - _FIELDS
+    if unknown:
+        raise ValueError(f"Champ d’état d’import inconnu : {sorted(unknown)[0]}.")
+    state = load_history_import(detect_stale=False)
+    state.update(updates)
+    moment = now or _now()
+    state["updated_at"] = _iso(moment)
+    if state.get("status") != "idle" and state.get("reference_date"):
+        state["heartbeat_at"] = _iso(moment)
     return _atomic_write(state)
 
 

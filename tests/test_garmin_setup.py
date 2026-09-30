@@ -11,7 +11,11 @@ def test_initial_setup_runs_in_order_and_never_publishes(monkeypatch) -> None:
     monkeypatch.setattr(garmin_setup, "user_context", lambda user_id: nullcontext())
     monkeypatch.setattr(garmin_setup, "load_settings", lambda: object())
     monkeypatch.setattr(garmin_setup, "connect", lambda settings: events.append("connect") or object())
-    monkeypatch.setattr(garmin_setup, "sync_once", lambda *args, **kwargs: events.append("sync") or [])
+    monkeypatch.setattr(
+        garmin_setup,
+        "paginate_activity_history",
+        lambda *args, **kwargs: events.append("paginate") or {},
+    )
     monkeypatch.setattr(
         garmin_setup,
         "inspect_garmin_account",
@@ -38,7 +42,7 @@ def test_initial_setup_runs_in_order_and_never_publishes(monkeypatch) -> None:
     assert events == [
         "importing",
         "connect",
-        "sync",
+        "paginate",
         "analyzing",
         "inspect",
         "preparing_plan",
@@ -54,7 +58,7 @@ def test_ai_failure_is_retryable_without_garmin_reauthentication(monkeypatch) ->
     monkeypatch.setattr(garmin_setup, "user_context", lambda user_id: nullcontext())
     monkeypatch.setattr(garmin_setup, "load_settings", lambda: object())
     monkeypatch.setattr(garmin_setup, "connect", lambda settings: object())
-    monkeypatch.setattr(garmin_setup, "sync_once", lambda *args, **kwargs: [])
+    monkeypatch.setattr(garmin_setup, "paginate_activity_history", lambda *args, **kwargs: {})
     monkeypatch.setattr(
         garmin_setup,
         "inspect_garmin_account",
@@ -93,7 +97,7 @@ def test_reconnecting_legacy_complete_user_does_not_generate_new_plan(
     monkeypatch.setattr(garmin_setup, "load_settings", lambda: object())
     monkeypatch.setattr(garmin_setup, "load_onboarding", lambda: {"status": "complete"})
     monkeypatch.setattr(garmin_setup, "connect", lambda settings: object())
-    monkeypatch.setattr(garmin_setup, "sync_once", lambda *args, **kwargs: [])
+    monkeypatch.setattr(garmin_setup, "paginate_activity_history", lambda *args, **kwargs: {})
     monkeypatch.setattr(
         garmin_setup,
         "inspect_garmin_account",
@@ -114,3 +118,7 @@ def test_reconnecting_legacy_complete_user_does_not_generate_new_plan(
 
     assert generated == []
     assert statuses == ["importing", "analyzing", "complete"]
+
+
+def test_initial_setup_no_longer_exposes_the_legacy_sync_once_limit() -> None:
+    assert not hasattr(garmin_setup, "sync_once")
