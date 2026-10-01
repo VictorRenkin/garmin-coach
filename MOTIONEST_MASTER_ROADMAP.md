@@ -145,7 +145,7 @@ Garmin n'est jamais une identité Motionest. Une reconnexion Garmin ne réinitia
 | GoalEvidence | DONE | Contrat V1 pur, faits versionnés et intégration runtime `/api/onboarding`; aucun verdict sportif. |
 | TrainingPatternEvidence V1 | DONE | Contrat compact, déterministe et runtime : intervalles structurés explicites, longue sortie relative, course explicite, intensité agrégée, provenance et limites. |
 | AI Goal Assessment | DONE | Input compact, prompt versionné, sortie Pydantic, supporting facts whitelistés, cache fingerprinté et endpoints GET/POST séparés. |
-| Fréquence recommandée / décision | TODO | Dépend du futur GoalAssessment. |
+| Fréquence recommandée / décision | DONE | Recommandation IA explicite, confirmation utilisateur persistée et PlanConstraints déterministes. |
 | Onboarding V2 | TODO | Doit persister les contrats V1 et les confirmations. |
 | Écran de compréhension | TODO | Dépend de l'orchestration des contrats. |
 | Contrat IA V2 et plan V2 | TODO | Le flux IA/plan actuel est legacy. |
@@ -578,19 +578,19 @@ Cette brique ne marque pas le contrat IA V2 général comme terminé : elle couv
 
 ### Phase 7 — Fréquence recommandée et PlanningDecision
 
-**STATUS : TODO**
+**STATUS : DONE**
 
 **OBJECTIF**
 
-Proposer une fréquence compatible avec l'objectif, l'état athlète et la disponibilité, puis obtenir une confirmation.
+Construire le contexte factuel et les contraintes dures, demander à l'IA une recommandation sportive de fréquence, puis obtenir et persister une confirmation explicite de l'utilisateur.
 
 **ENTRÉES**
 
-Availability, AthleteState, Goal, SubjectiveContext, DataConfidence et futur GoalAssessment.
+Availability, AthleteState, Goal, SubjectiveContext, DataConfidence, GoalEvidence, TrainingPatternEvidence et GoalAssessment courant lorsqu'il s'agit d'une course.
 
 **SORTIES**
 
-`recommended_sessions_per_week`, raisons/limites, `confirmed_sessions_per_week` après choix utilisateur, puis `PlanConstraints`.
+`PlanningRecommendationV1`, `PlanningDecisionV1` après choix utilisateur, puis `PlanConstraintsV1` construit uniquement depuis la valeur confirmée.
 
 **DÉPENDANCES**
 
@@ -598,19 +598,23 @@ Phases 6, 6 bis et 6 ter.
 
 **RÈGLES MÉTIER**
 
-`available_days ≠ preferred_sessions ≠ recommended_sessions ≠ confirmed_sessions`. La recommandation ne dépasse pas les jours disponibles. La valeur confirmée est la seule contrainte de génération.
+`available_days ≠ preferred_sessions ≠ recommended_sessions ≠ confirmed_sessions`. Motionest construit les faits, impose les contraintes dures, valide et persiste la confirmation. L'IA recommande la fréquence sportive sans choisir les jours. L'utilisateur confirme ou modifie cette proposition. La recommandation et la confirmation ne dépassent jamais les jours disponibles ; seule la valeur confirmée est une contrainte de génération.
 
 **CE QUI EXISTE DÉJÀ**
 
-Availability V1, fréquence observée dans AthleteState/MotionestContext et `sessionsPerWeek` legacy.
+Availability V1, fréquence observée dans AthleteState/MotionestContext, GoalAssessment V1 et `sessionsPerWeek` legacy.
 
-**CE QUI RESTE À FAIRE**
+**PREUVES**
 
-Contrat de recommandation, règles déterministes, confirmation persistée, gestion d'ajustement et construction de PlanConstraints.
+`GET /api/planning-recommendation` et `GET /api/planning-decision` restent locaux. Les deux `POST` séparent génération IA et confirmation. Le cache couvre faits, contrat et contenu du prompt. La décision possède un fingerprint stable qui exclut l'historique Garmin volatile mais couvre Goal, Availability, sécurité déclarée et activités non enregistrées agrégées. Les stores sont atomiques, isolés et protégés contre les doubles appels dans un seul processus.
+
+**LIMITES**
+
+La protection anti-double génération est mono-processus ; un déploiement multi-processus exigera une coordination partagée. Le calendrier détaillé et le choix des jours restent hors périmètre.
 
 **TESTS REQUIS**
 
-1–7 jours, préférence absente ou supérieure, beginner, comeback, douleur, faible confiance, changement de disponibilité et confirmation différente.
+1–7 jours, préférence absente ou différente, beginner, comeback, progress, race et dépendance GoalAssessment, douleur, faible confiance, activités non enregistrées, grounding, cache, concurrence, changement de déclarations, stabilité face à une nouvelle activité Garmin et confirmation différente.
 
 **CRITÈRE DE FIN**
 
@@ -1127,10 +1131,10 @@ Ses statuts décrivent uniquement la disponibilité technique : `available`, `pa
 | --- | --- | --- |
 | `available_days` | déclarée | Jours généralement possibles. |
 | `preferred_sessions_per_week` | déclarée, facultative | Préférence de l'utilisateur. |
-| `recommended_sessions_per_week` | recommandée par règles Motionest | Proposition compte tenu du contexte. |
-| `confirmed_sessions_per_week` | confirmée | Contrainte acceptée pour le plan. |
+| `recommended_sessions_per_week` | recommandée par l'IA | Proposition sportive expliquée à partir des faits structurés et de principes généraux. |
+| `confirmed_sessions_per_week` | confirmée par l'utilisateur | Seule fréquence constituant une contrainte ferme pour le plan. |
 
-La fréquence observée dans Garmin est une mesure historique, jamais une disponibilité future. Une modification de disponibilité invalide la recommandation et les contraintes dépendantes, pas l'historique.
+Motionest ne contient aucune heuristique sportive déterministe de fréquence. Il valide uniquement les bornes entières et la disponibilité. La fréquence observée dans Garmin est une mesure historique, jamais une disponibilité future. Une nouvelle activité peut invalider la recommandation sans invalider une décision humaine déjà confirmée. Goal, Availability ou un changement pertinent du contexte de sécurité déclaré invalident la décision.
 
 ### 7.3 Onboarding minimal
 

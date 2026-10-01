@@ -86,6 +86,13 @@ from .onboarding import (
     mark_profile_ready,
     update_garmin_setup,
 )
+from .planning_decision import (
+    PlanningDecisionError,
+    confirm_planning_decision,
+    generate_planning_recommendation,
+    get_planning_decision_state,
+    get_planning_recommendation_state,
+)
 from .runtime_context import build_runtime_motionest_context
 from .summary import is_running
 from .storage import load_activities
@@ -1036,6 +1043,71 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 return
             _json_response(self, {"ok": True, **state.model_dump(mode="json")})
             return
+        if path == "/api/planning-recommendation":
+            user_id = current_user_id()
+            if not user_id:
+                _json_response(
+                    self,
+                    {"ok": False, "message": "Utilisateur Motionest indisponible."},
+                    401,
+                )
+                return
+            try:
+                state = get_planning_recommendation_state(user_id)
+            except PlanningDecisionError as exc:
+                _json_response(
+                    self,
+                    {
+                        "ok": True,
+                        "status": "missing",
+                        "recommendation": None,
+                        "diagnostics": [exc.code],
+                    },
+                )
+                return
+            except Exception:
+                LOGGER.exception("Lecture PlanningRecommendation indisponible")
+                _json_response(
+                    self,
+                    {"ok": False, "message": "PlanningRecommendation est indisponible."},
+                    500,
+                )
+                return
+            _json_response(self, {"ok": True, **state.model_dump(mode="json")})
+            return
+        if path == "/api/planning-decision":
+            user_id = current_user_id()
+            if not user_id:
+                _json_response(
+                    self,
+                    {"ok": False, "message": "Utilisateur Motionest indisponible."},
+                    401,
+                )
+                return
+            try:
+                state = get_planning_decision_state(user_id)
+            except PlanningDecisionError as exc:
+                _json_response(
+                    self,
+                    {
+                        "ok": True,
+                        "status": "missing",
+                        "decision": None,
+                        "plan_constraints": None,
+                        "diagnostics": [exc.code],
+                    },
+                )
+                return
+            except Exception:
+                LOGGER.exception("Lecture PlanningDecision indisponible")
+                _json_response(
+                    self,
+                    {"ok": False, "message": "PlanningDecision est indisponible."},
+                    500,
+                )
+                return
+            _json_response(self, {"ok": True, **state.model_dump(mode="json")})
+            return
         if path == "/api/garmin/setup-status":
             _json_response(
                 self,
@@ -1352,6 +1424,105 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 _json_response(
                     self,
                     {"ok": False, "message": "GoalAssessment est indisponible."},
+                    500,
+                )
+                return
+            _json_response(self, {"ok": True, **state.model_dump(mode="json")})
+            return
+        if path == "/api/planning-recommendation":
+            user_id = current_user_id()
+            if not user_id:
+                _json_response(
+                    self,
+                    {"ok": False, "message": "Utilisateur Motionest indisponible."},
+                    401,
+                )
+                return
+            try:
+                state = generate_planning_recommendation(user_id)
+            except PlanningDecisionError as exc:
+                status = {
+                    "goal_unavailable": 409,
+                    "availability_unavailable": 409,
+                    "goal_assessment_required": 409,
+                    "goal_assessment_stale": 409,
+                    "ai_not_configured": 503,
+                    "provider_unavailable": 502,
+                    "provider_timeout": 504,
+                    "provider_rate_limited": 429,
+                    "provider_quota_exhausted": 503,
+                    "invalid_provider_response": 502,
+                    "unknown_supporting_fact": 502,
+                    "duplicate_supporting_fact": 502,
+                    "recommendation_outside_availability": 502,
+                }.get(exc.code, 422)
+                _json_response(
+                    self, {"ok": False, "code": exc.code, "message": str(exc)}, status
+                )
+                return
+            except Exception:
+                LOGGER.exception("Génération PlanningRecommendation indisponible")
+                _json_response(
+                    self,
+                    {"ok": False, "message": "PlanningRecommendation est indisponible."},
+                    500,
+                )
+                return
+            _json_response(self, {"ok": True, **state.model_dump(mode="json")})
+            return
+        if path == "/api/planning-decision":
+            user_id = current_user_id()
+            if not user_id:
+                _json_response(
+                    self,
+                    {"ok": False, "message": "Utilisateur Motionest indisponible."},
+                    401,
+                )
+                return
+            try:
+                content_length = int(self.headers.get("Content-Length", "0"))
+                if content_length < 0 or content_length > 4_096:
+                    raise ValueError("Requête de décision trop volumineuse.")
+                body = json.loads(self.rfile.read(content_length) or b"{}")
+                if not isinstance(body, dict):
+                    raise ValueError("Requête de décision invalide.")
+                state = confirm_planning_decision(
+                    user_id,
+                    confirmed_sessions_per_week=body.get(
+                        "confirmedSessionsPerWeek",
+                        body.get("confirmed_sessions_per_week"),
+                    ),
+                    recommendation_fingerprint=str(
+                        body.get(
+                            "recommendationFingerprint",
+                            body.get("recommendation_fingerprint", ""),
+                        )
+                        or ""
+                    ),
+                )
+            except (ValueError, TypeError, json.JSONDecodeError) as exc:
+                _json_response(self, {"ok": False, "message": str(exc)}, 400)
+                return
+            except PlanningDecisionError as exc:
+                status = {
+                    "goal_unavailable": 409,
+                    "availability_unavailable": 409,
+                    "goal_assessment_required": 409,
+                    "goal_assessment_stale": 409,
+                    "recommendation_stale": 409,
+                    "recommendation_insufficient_context": 409,
+                    "decision_invalid": 422,
+                    "decision_stale": 409,
+                }.get(exc.code, 422)
+                _json_response(
+                    self, {"ok": False, "code": exc.code, "message": str(exc)}, status
+                )
+                return
+            except Exception:
+                LOGGER.exception("Confirmation PlanningDecision indisponible")
+                _json_response(
+                    self,
+                    {"ok": False, "message": "PlanningDecision est indisponible."},
                     500,
                 )
                 return
