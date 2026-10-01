@@ -111,6 +111,8 @@ def test_runtime_handles_empty_limited_and_rich_history() -> None:
         assert result.reference_date == REFERENCE.isoformat()
         assert result.context.as_of == REFERENCE.isoformat()
         assert result.context.integration.blocking_issues == []
+        assert result.goal_evidence is not None
+        assert result.goal_evidence.status == "insufficient_data"
 
     assert statuses[0] == ("insufficient_data", "partial", 0)
     assert statuses[1][0] == "partial"
@@ -131,6 +133,7 @@ def test_missing_profile_produces_explicit_contract_blockers() -> None:
         "goal_absent",
         "availability_absent",
     }
+    assert result.goal_evidence is None
 
 
 @pytest.mark.parametrize(
@@ -279,6 +282,11 @@ def test_explicit_v1_inputs_are_recalculated_without_legacy_override() -> None:
     assert first.inputs_source == second.inputs_source == "v1"
     assert first.context.goal is not None and first.context.goal.intent == "progress"
     assert second.context.goal is not None and second.context.goal.intent == "comeback"
+    assert first.goal_evidence is not None
+    assert second.goal_evidence is not None
+    assert first.goal_evidence.goal_intent == "progress"
+    assert second.goal_evidence.goal_intent == "comeback"
+    assert first.goal_evidence.status == second.goal_evidence.status == "not_applicable"
     assert second.context.integration.status == "partial"
 
 
@@ -450,6 +458,8 @@ def test_dashboard_onboarding_endpoint_builds_runtime_without_external_calls(
     runtime = payload["motionestRuntime"]
     assert runtime["schema_version"] == 1
     assert runtime["context"]["training_history_summary"]["activity_count"] == 1
+    assert runtime["goal_evidence"]["schema_version"] == 1
+    assert runtime["goal_evidence"]["status"] == "insufficient_data"
     exposed = json.dumps(runtime, ensure_ascii=False)
     for forbidden_value in (
         "Private activity",

@@ -11,8 +11,8 @@ Motionest transforme des données sportives mesurées, des intentions utilisateu
 | Responsable | Rôle |
 | --- | --- |
 | Garmin / source sportive | Fournir les données mesurées et historiques disponibles : activités, métriques et, plus tard, données Health/Recovery. |
-| Motionest | Isoler, importer, assainir, normaliser, résumer et calculer de façon déterministe; évaluer la confiance, les contraintes et la faisabilité; orchestrer les étapes. |
-| IA | Comprendre et formuler, expliquer, générer et adapter un plan à partir d'un contexte structuré et de décisions déjà bornées. |
+| Motionest | Isoler, importer, assainir, normaliser, résumer, calculer et comparer de façon déterministe; évaluer la confiance et les contraintes; orchestrer les étapes. |
+| IA | Interpréter et juger la difficulté/faisabilité de l'objectif, expliquer ce jugement, puis générer et adapter un plan à partir d'un contexte structuré et de contraintes bornées. |
 | Utilisateur | Déclarer son intention, ses disponibilités futures et son contexte subjectif; corriger ses déclarations; accepter ou refuser les décisions et publications. |
 
 Principes non négociables :
@@ -51,14 +51,15 @@ Principes non négociables :
 | Availability V1 | DONE comme contrat | jours, préférence de fréquence, jours de sortie longue, date d'effet, adaptateur legacy | L'UI persiste encore `availableDays`/`sessionsPerWeek`. |
 | SubjectiveContext V1 | DONE comme contrat | douleur explicite/unknown, préférences, activités non enregistrées, adaptateur legacy | L'UI actuelle ne collecte pas tout le contrat minimal cible. |
 | MotionestContext V1 | DONE comme contrat | intégration compacte et déterministe, blocages techniques vs limitations sportives | Construit sur `GET /api/onboarding`; non transmis aux prompts legacy. |
-| Génération et publication legacy | PARTIAL / LEGACY | `training_cycle.py`, `garmin_workouts.py`, acceptation de proposition | N'utilise pas MotionestContext V1 ni GoalFeasibility/PlanConstraints V2. |
+| GoalEvidence V1 | DONE comme contrat runtime | faits déterministes pour l'objectif, preuves/confiance/échéance et comparaison Riegel route | Ne juge pas la faisabilité; le futur GoalAssessment V1 sera produit par l'IA. |
+| Génération et publication legacy | PARTIAL / LEGACY | `training_cycle.py`, `garmin_workouts.py`, acceptation de proposition | N'utilise pas MotionestContext V1, GoalEvidence/GoalAssessment ni PlanConstraints V2. |
 | Dashboard actuel | PARTIAL / LEGACY | activités, objectif, plan, coach, détails, actions | Mélange stockage legacy et cible; ce n'est pas le dashboard final. |
 | Strava | DEFERRED / LEGACY | import manuel d'un export CSV de courses | Pas d'API/OAuth, pas de SourceAdapter canonique, pas de déduplication multisource. |
 | Recovery/Health | TODO | absence explicitement représentée dans DataConfidence/AthleteState | Aucun import Garmin Health et aucun RecoveryState. |
 
 ### 2.2 Ce que « DONE » signifie ici
 
-`DONE comme contrat` signifie : schéma V1 strict, constructeur déterministe, sortie compacte et tests dédiés. Depuis l'orchestration runtime, ces sept contrats sont aussi construits à la demande par le point réel `/api/onboarding`. Ils ne pilotent pas encore l'onboarding V2, GoalFeasibility, les prompts ou la génération de plan.
+`DONE comme contrat` signifie : schéma V1 strict, constructeur déterministe, sortie compacte et tests dédiés. Depuis l'orchestration runtime, les contrats sont construits à la demande par le point réel `/api/onboarding`. Ils ne pilotent pas encore l'onboarding V2, le futur GoalAssessment IA, les prompts de plan ou la génération de plan.
 
 ### 2.3 Tests au point de référence
 
@@ -78,19 +79,20 @@ Principes non négociables :
 8. Import paginé, détails multisport, reprise et progression visible.
 9. Analyse locale déterministe.
 10. Écran « Voilà ce que Motionest a compris de toi ».
-11. Évaluation déterministe de l'objectif (`GoalFeasibility`).
-12. Proposition déterministe de fréquence.
-13. Confirmation ou ajustement utilisateur de la fréquence.
-14. Génération d'une proposition de plan bornée par des contraintes structurées.
-15. Présentation du plan et de ses limites.
-16. Explication claire de la proposition.
-17. Acceptation ou refus explicite.
-18. Publication Garmin uniquement après acceptation.
-19. Dashboard opérationnel.
-20. Import et analyse factuelle des entraînements futurs.
-21. Adaptation hebdomadaire, avec confirmation selon l'impact.
-22. Modification de l'objectif ou des disponibilités et recalcul des décisions dépendantes.
-23. Fin de cycle, nouvelle course ou nouveau cycle.
+11. Construction déterministe des preuves liées à l'objectif (`GoalEvidence`).
+12. Évaluation expliquée de l'objectif par l'IA (`GoalAssessment`).
+13. Proposition de fréquence.
+14. Confirmation ou ajustement utilisateur de la fréquence.
+15. Génération d'une proposition de plan bornée par des contraintes structurées.
+16. Présentation du plan et de ses limites.
+17. Explication claire de la proposition.
+18. Acceptation ou refus explicite.
+19. Publication Garmin uniquement après acceptation.
+20. Dashboard opérationnel.
+21. Import et analyse factuelle des entraînements futurs.
+22. Adaptation hebdomadaire, avec confirmation selon l'impact.
+23. Modification de l'objectif ou des disponibilités et recalcul des décisions dépendantes.
+24. Fin de cycle, nouvelle course ou nouveau cycle.
 
 Garmin n'est jamais une identité Motionest. Une reconnexion Garmin ne réinitialise jamais l'onboarding. Une déconnexion de source ne doit pas supprimer implicitement l'historique Motionest sans choix explicite.
 
@@ -106,6 +108,7 @@ Garmin n'est jamais une identité Motionest. Une reconnexion Garmin ne réinitia
 - [x] Goal V1, Availability V1 et SubjectiveContext V1.
 - [x] MotionestContext V1 avec distinction blocage technique/limitation sportive.
 - [x] Orchestration runtime V1 appelée par `/api/onboarding`, avec migration legacy idempotente.
+- [x] GoalEvidence V1 déterministe, exposé comme champ frère du contexte runtime.
 
 ### EN COURS / PARTIEL
 
@@ -116,7 +119,8 @@ Garmin n'est jamais une identité Motionest. Une reconnexion Garmin ne réinitia
 
 ### À FAIRE
 
-- [ ] GoalFeasibility.
+- [ ] TrainingPattern / RunningSessionClassification V1 : types de séances et compétitions passées réellement identifiables.
+- [ ] AI Goal Assessment V1 : jugement sportif expliqué à partir de GoalEvidence.
 - [ ] Fréquence recommandée, confirmation et PlanConstraints.
 - [ ] Onboarding V2 et écran de compréhension.
 - [ ] Contrat IA V2, PlanProposal V2 et validation locale.
@@ -138,8 +142,10 @@ Garmin n'est jamais une identité Motionest. Une reconnexion Garmin ne réinitia
 | Contrats utilisateur | DONE | Goal, Availability et SubjectiveContext disponibles comme contrats. |
 | Intégration du contexte | DONE | MotionestContext V1 existe comme contrat pur. |
 | Intégration runtime des contrats V1 | DONE | Construction locale à la demande via `/api/onboarding`; déclarations V1 versionnées et migration legacy idempotente. |
-| GoalFeasibility | TODO | Prochaine brique métier recommandée. |
-| Fréquence recommandée / décision | TODO | Dépend de GoalFeasibility. |
+| GoalEvidence | DONE | Contrat V1 pur, faits versionnés et intégration runtime `/api/onboarding`; aucun verdict sportif. |
+| TrainingPattern / Session Classification | TODO | Future classification factuelle des séances et compétitions identifiables; responsabilité séparée de GoalEvidence. |
+| AI Goal Assessment | TODO | Future interprétation IA des preuves, avec explication, incertitude et réserves. |
+| Fréquence recommandée / décision | TODO | Dépend du futur GoalAssessment. |
 | Onboarding V2 | TODO | Doit persister les contrats V1 et les confirmations. |
 | Écran de compréhension | TODO | Dépend de l'orchestration des contrats. |
 | Contrat IA V2 et plan V2 | TODO | Le flux IA/plan actuel est legacy. |
@@ -174,8 +180,11 @@ flowchart TD
     AV --> MC
     SC --> MC
 
-    MC --> GF["GoalFeasibility"]
-    GF --> PD["PlanningDecision / PlanConstraints"]
+    MC --> GE["GoalEvidence V1 — faits"]
+    THS --> TP["TrainingPattern / Session Classification V1"]
+    GE --> AIGA["IA — GoalAssessment V1"]
+    TP --> AIGA
+    AIGA --> PD["PlanningDecision / PlanConstraints"]
     AV --> PD
     SC --> PD
     RS["RecoveryState — si disponible"] -.-> PD
@@ -194,7 +203,8 @@ Règles de dépendance :
 - `DataConfidence` qualifie ce que le résumé permet d'affirmer; il ne remplace pas les faits.
 - `AthleteState` décrit l'athlète à partir des faits et de leur confiance; il ne juge pas l'objectif.
 - `MotionestContext` vérifie que les contrats peuvent circuler ensemble; il ne recommande pas de plan.
-- `GoalFeasibility` juge ce que les preuves autorisent à conclure sur l'objectif.
+- `GoalEvidence` calcule, structure et compare les faits; il ne juge jamais l'objectif.
+- le futur `GoalAssessment` est produit par l'IA pour interpréter la difficulté/faisabilité, expliquer le jugement et exposer son incertitude.
 - `PlanningDecision` distingue jours disponibles, préférence, recommandation puis confirmation.
 - l'IA intervient après les décisions déterministes et ne peut contourner leurs contraintes.
 
@@ -408,7 +418,7 @@ Builder pur, sortie compacte IA, contrôles de dates et de cohérence, statuts `
 
 **CE QUI RESTE À FAIRE**
 
-GoalFeasibility et les futures couches de décision pourront consommer ce contexte runtime. Les prompts et la génération legacy restent volontairement inchangés.
+GoalEvidence et les futures couches IA/décision peuvent consommer ce contexte runtime. Les prompts et la génération legacy restent volontairement inchangés.
 
 **TESTS REQUIS**
 
@@ -466,13 +476,13 @@ Atteint : le contexte réel est construit sur un point runtime utilisé, sans fi
 
 Changer l'onboarding visuel, juger l'objectif ou appeler l'IA.
 
-### Phase 6 — GoalFeasibility
+### Phase 6 — Goal Evidence / Goal Assessment Context
 
-**STATUS : TODO**
+**STATUS : DONE**
 
 **OBJECTIF**
 
-Évaluer de façon explicable ce que les données permettent d'affirmer sur l'objectif et son échéance.
+Calculer et structurer les faits nécessaires à une future évaluation expliquée de l'objectif.
 
 **ENTRÉES**
 
@@ -480,7 +490,7 @@ Goal, AthleteState, TrainingHistorySummary, DataConfidence, date de référence 
 
 **SORTIES**
 
-Contrat versionné avec un verdict dont les noms restent à figer : `supported/realistic`, `ambitious_but_possible`, `currently_unsupported/unrealistic_for_deadline` ou `insufficient_data`; preuves, limites et raisons.
+`GoalEvidenceV1`, contrat versionné avec uniquement les statuts de disponibilité `available`, `partial`, `insufficient_data` et `not_applicable`; scope, comparaison factuelle, preuves et limites.
 
 **DÉPENDANCES**
 
@@ -488,27 +498,71 @@ Phase 5.
 
 **RÈGLES MÉTIER**
 
-Comparer temps disponible, performances, volume, fréquence, longues sorties, continuité, tendance, preuves et confiance. Une absence de preuve doit produire `insufficient_data`, pas une impossibilité. Aucun verdict ne vient de l'IA seule.
+Calculer l'échéance, sélectionner les preuves structurées et exposer volume, fréquence, longues sorties, interruptions, confiance et données manquantes. Riegel reste une comparaison factuelle pour les distances route standards. Aucun seuil ne classe l'objectif comme soutenu, ambitieux, réaliste ou non soutenu.
 
 **CE QUI EXISTE DÉJÀ**
 
-Goal V1, preuves de performance, volumes/frequences/tendances, AthleteState et confiance explicable.
+`goal_evidence.py` définit le contrat strict et `build_goal_evidence_v1()`. Le builder consomme uniquement Goal V1, AthleteState, TrainingHistorySummary, DataConfidence et une date explicite. Il sélectionne une référence par récence, confiance, proximité de distance puis départage stable. Pour les courses route standards uniquement, Riegel V1 (`1.06`) calcule une équivalence et l'écart à la cible, jamais un verdict. Le wrapper runtime expose `goal_evidence` à côté de `context` via `GET /api/onboarding`, sans modifier le contrat MotionestContext V1.
 
 **CE QUI RESTE À FAIRE**
 
-Figer vocabulaire, seuils et provenance; définir le contrat, builder et sortie compacte; traiter séparément les quatre intentions et courses sans date/chrono.
+Le futur AI Goal Assessment devra consommer ces faits et produire séparément un `GoalAssessmentV1` expliqué. Trail/custom restent sans extrapolation route; une course sans date conserve `days_to_event: null`; Recovery reste indisponible et non reconstruit.
 
 **TESTS REQUIS**
 
-Beginner vide, comeback ancien, progress sans preuve, race réaliste/ambitieuse/non soutenue/sans date/sans chrono, limites de date, confiance faible, déterminisme et absence d'IA.
+Couverture dédiée : les quatre intentions, historique vide/faible/riche, 5 km/10 km/semi/marathon, trail/custom, sans date/chrono, date passée/présente, preuves absentes/anciennes/multiples, choix de référence, Riegel, écarts bruts, confiance, longues sorties, interruptions, confidentialité, performance et absence d'I/O/IA.
 
 **CRITÈRE DE FIN**
 
-Chaque verdict est reproductible, justifié par des champs structurés et ne dépasse jamais la confiance disponible.
+Atteint : chaque fait est reproductible, qualifié par la confiance disponible et réellement construit dans le parcours runtime, sans verdict sportif.
 
 **NE PAS FAIRE À CETTE ÉTAPE**
 
-Recommander une fréquence, générer des séances ou demander à l'IA de trancher.
+Juger la faisabilité, recommander une fréquence, générer des séances ou appeler l'IA.
+
+### Phase 6 bis — TrainingPattern / RunningSessionClassification V1
+
+**STATUS : TODO**
+
+**OBJECTIF**
+
+Exposer factuellement les types de séances réellement observables et les compétitions passées réellement identifiables, sans mélanger cette responsabilité avec GoalEvidence.
+
+**SORTIES CIBLES**
+
+Classification structurée des séances (`easy`, `recovery`, `long_run`, `intervals`, `tempo` lorsque démontrable) et futur `PastRaceEvidence`, avec confiance et provenance explicites.
+
+**NE PAS FAIRE DANS GOALEVIDENCE**
+
+Déduire ou classer des séances, détecter des courses passées ou modifier une PerformanceEvidence.
+
+### Phase 6 ter — AI Goal Assessment
+
+**STATUS : TODO**
+
+**OBJECTIF**
+
+Interpréter `GoalEvidenceV1` avec l'IA et produire un jugement sportif expliqué sans recalculer ni altérer les faits Motionest.
+
+**ENTRÉES**
+
+GoalEvidence V1, futur TrainingPattern V1 et le contexte minimal utile déjà structuré.
+
+**SORTIES**
+
+Futur `GoalAssessmentV1` structuré : assessment, explanation, supporting_facts, uncertainty et caveats.
+
+**DÉPENDANCES**
+
+Phases 6 et 6 bis, puis futur contrat IA sécurisé.
+
+**RÈGLES MÉTIER**
+
+L'IA interprète et explique; elle ne modifie pas les preuves, ne fabrique pas de chrono et rend l'incertitude visible. La sortie doit être validée localement.
+
+**CE QUI RESTE À FAIRE**
+
+Figer le schéma, le prompt, les valeurs d'assessment, la validation, les politiques d'erreur et les tests mockés. Aucun de ces éléments n'est implémenté dans la Phase 6.
 
 ### Phase 7 — Fréquence recommandée et PlanningDecision
 
@@ -520,7 +574,7 @@ Proposer une fréquence compatible avec l'objectif, l'état athlète et la dispo
 
 **ENTRÉES**
 
-Availability, AthleteState, Goal, SubjectiveContext, DataConfidence et GoalFeasibility.
+Availability, AthleteState, Goal, SubjectiveContext, DataConfidence et futur GoalAssessment.
 
 **SORTIES**
 
@@ -528,7 +582,7 @@ Availability, AthleteState, Goal, SubjectiveContext, DataConfidence et GoalFeasi
 
 **DÉPENDANCES**
 
-Phase 6.
+Phases 6, 6 bis et 6 ter.
 
 **RÈGLES MÉTIER**
 
@@ -610,7 +664,7 @@ Rendre les faits, déclarations, limites et décisions contrôlables avant gén�
 
 **ENTRÉES**
 
-MotionestContext, GoalFeasibility, recommandation de fréquence et RecoveryState si réellement disponible.
+MotionestContext, GoalEvidence, futur GoalAssessment, recommandation de fréquence et RecoveryState si réellement disponible.
 
 **SORTIES**
 
@@ -654,7 +708,7 @@ Définir une frontière stable et minimale entre décisions Motionest et génér
 
 **ENTRÉES**
 
-MotionestContext, GoalFeasibility et PlanConstraints compactés.
+MotionestContext, GoalEvidence, futur GoalAssessment et PlanConstraints compactés.
 
 **SORTIES**
 
@@ -666,7 +720,7 @@ Phases 6 et 7.
 
 **RÈGLES MÉTIER**
 
-Credentials backend uniquement; données compactes; aucune clé dans frontend/logs/profil/dépôt. L'IA explique, génère, adapte et formule; elle ne recalcule pas les métriques, n'invente rien, n'ignore pas GoalFeasibility et ne modifie pas les disponibilités.
+Credentials backend uniquement; données compactes; aucune clé dans frontend/logs/profil/dépôt. L'IA interprète GoalEvidence, explique, génère, adapte et formule; elle ne recalcule pas les métriques, n'invente rien et ne modifie pas les disponibilités.
 
 **CE QUI EXISTE DÉJÀ**
 
@@ -698,7 +752,7 @@ Produire une proposition structurée conforme aux décisions déterministes.
 
 **ENTRÉES**
 
-Goal, Availability confirmée, SubjectiveContext, AthleteState, DataConfidence, GoalFeasibility, PlanConstraints et RecoveryState si disponible.
+Goal, Availability confirmée, SubjectiveContext, AthleteState, DataConfidence, GoalEvidence, futur GoalAssessment, PlanConstraints et RecoveryState si disponible.
 
 **SORTIES**
 
@@ -1042,9 +1096,9 @@ Déployer les fichiers JSON locaux comme stockage multi-instance sans stratégie
 
 ## 7. Détails transverses à figer
 
-### 7.1 GoalFeasibility
+### 7.1 GoalEvidence et futur GoalAssessment
 
-Le futur composant doit être pur, versionné et explicable. Il ne produit pas un plan. Il compare :
+`GoalEvidenceV1` est pur, versionné et factuel. Il ne produit ni jugement ni plan. Il expose :
 
 - délai jusqu'à la course lorsqu'une date existe;
 - performances explicitement disponibles et leur ancienneté;
@@ -1053,7 +1107,7 @@ Le futur composant doit être pur, versionné et explicable. Il ne produit pas u
 - preuves de performance et leur provenance;
 - confiance par composant et données manquantes.
 
-Les libellés exacts des verdicts ne sont pas figés. `insufficient_data` est une conclusion valide, surtout pour `beginner`, et ne doit pas devenir un jugement négatif. Pour `race`, une date ou un chrono absent limite le type de verdict possible. Pour `progress` et `comeback`, la faisabilité doit respecter l'intention sans inventer une échéance.
+Ses statuts décrivent uniquement la disponibilité technique : `available`, `partial`, `insufficient_data` et `not_applicable`. Le futur `GoalAssessmentV1`, produit par l'IA et validé localement, portera séparément assessment, explanation, supporting_facts, uncertainty et caveats. Une absence de données ne doit jamais être transformée en jugement négatif.
 
 ### 7.2 Fréquence et contraintes
 
@@ -1094,7 +1148,7 @@ Sources à auditer séparément : Training Readiness, Recovery Time, HRV, Sleep,
 - aucune clé dans le frontend, les logs, le profil ou Git;
 - l'entrée provient de MotionestContext et des contrats de décision, en format compact;
 - l'IA explique, génère, adapte et formule;
-- elle ne recalcule pas les métriques de base, n'invente pas Recovery/performance, ne contourne pas GoalFeasibility et ne change pas silencieusement les disponibilités;
+- elle ne recalcule pas les métriques de base, n'invente pas Recovery/performance, ne modifie pas GoalEvidence et ne change pas silencieusement les disponibilités;
 - sorties structurées, validées localement, limitées en tokens, observées en latence/coût et sans contenu sensible dans les logs.
 
 ### 7.7 Génération et adaptation
@@ -1241,7 +1295,7 @@ Motionest est utilisable de bout en bout seulement si tous les éléments suivan
 - connexion Garmin par compte et scope choisi;
 - import multisport paginé, détaillé, reprenable et observable;
 - historique canonique et analyse déterministe V1 orchestrés réellement;
-- GoalFeasibility versionnée et explicable;
+- GoalEvidence versionné et factuel, puis GoalAssessment IA structuré et expliqué;
 - recommandation puis confirmation de fréquence;
 - écran de compréhension et correction des déclarations;
 - contrat IA V2 compact et sécurisé;
@@ -1267,19 +1321,21 @@ Recovery/Health peut être absent du premier MVP si `unavailable` est correcteme
 
 ## 13. Ordre recommandé à partir de maintenant
 
-1. GoalFeasibility V1.
-2. Fréquence recommandée, confirmation et PlanConstraints.
-3. Onboarding V2 écrivant directement les contrats V1.
-4. Écran de compréhension.
-5. Contrat IA V2 et prompt compact.
-6. PlanProposal V2 et validation locale.
-7. Acceptation/publication Garmin V2.
-8. Dashboard minimal V2.
-9. Analyse post-activité et adaptation de base.
-10. Hardening/migration/observabilité en continu, puis gate production.
-11. Recovery/Health selon promesse MVP; statistiques et Strava après le MVP.
+1. GoalEvidence V1 — DONE.
+2. TrainingPattern / RunningSessionClassification V1.
+3. AI Goal Assessment V1 structuré et expliqué.
+4. Fréquence recommandée, confirmation et PlanConstraints.
+5. Onboarding V2 écrivant directement les contrats V1.
+6. Écran de compréhension.
+7. Contrat IA V2 pour la génération et prompt compact.
+8. PlanProposal V2 et validation locale.
+9. Acceptation/publication Garmin V2.
+10. Dashboard minimal V2.
+11. Analyse post-activité et adaptation de base.
+12. Hardening/migration/observabilité en continu, puis gate production.
+13. Recovery/Health selon promesse MVP; statistiques et Strava après le MVP.
 
-Dépendances critiques : contexte runtime avant faisabilité; faisabilité avant recommandation; fréquence confirmée avant PlanConstraints; décisions avant IA; validation locale avant acceptation; acceptation avant Garmin; activité canonique et déduplication avant multi-source.
+Dépendances critiques : contexte runtime avant GoalEvidence; TrainingPattern reste une brique séparée avant GoalAssessment IA; GoalEvidence et TrainingPattern avant assessment; assessment avant recommandation; fréquence confirmée avant PlanConstraints; validation locale avant acceptation; acceptation avant Garmin; activité canonique et déduplication avant multi-source.
 
 ## 14. Écarts avec les documents antérieurs
 
@@ -1289,7 +1345,7 @@ Dépendances critiques : contexte runtime avant faisabilité; faisabilité avant
 - Le README décrit principalement un produit course à pied et l'ancien historique, alors que l'import et le résumé actuels sont multisports.
 - L'ancien audit du parcours utilisateur reste utile comme photographie initiale, mais la vérification e-mail, le routage de login et la connexion Garmin moderne ont depuis été implémentés.
 - Le nom `dashboard_v2.html` ne signifie pas que le Dashboard V2 cible de cette roadmap est terminé : il consomme encore plusieurs sources legacy.
-- Une génération de plan, un cycle hebdomadaire et une publication Garmin existent, mais ils restent legacy car ils ne consomment pas MotionestContext/GoalFeasibility/PlanConstraints V2.
+- Une génération de plan, un cycle hebdomadaire et une publication Garmin existent, mais ils restent legacy car ils ne consomment pas MotionestContext/GoalEvidence/GoalAssessment/PlanConstraints V2.
 - Un import Strava CSV existe; cela ne constitue ni une connexion Strava ni une architecture multi-source.
 
 ## 15. Checklist de release
@@ -1304,7 +1360,7 @@ Dépendances critiques : contexte runtime avant faisabilité; faisabilité avant
 - [ ] Race avec/sans date et avec/sans chrono testée.
 - [ ] Multisport et activité non enregistrée testés.
 - [ ] Douleur oui/non/unknown testée et affichée avec provenance.
-- [ ] GoalFeasibility et fréquence expliquées, confirmables et versionnées.
+- [ ] GoalEvidence factuel, GoalAssessment IA expliqué et fréquence confirmable sont versionnés.
 - [ ] Plan généré respecte toutes les contraintes locales.
 - [ ] Acceptation, refus et révision testés.
 - [ ] Aucune publication Garmin avant acceptation explicite.

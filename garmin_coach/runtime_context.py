@@ -27,6 +27,7 @@ from .config import (
 )
 from .data_confidence import build_data_confidence
 from .goal import GoalV1, goal_context_for_legacy_confidence, goal_from_legacy_objective
+from .goal_evidence import GoalEvidenceV1, build_goal_evidence_v1
 from .local_activity_history import local_history_scope
 from .motionest_context import MotionestContextV1, build_motionest_context_v1
 from .subjective_context import (
@@ -74,6 +75,7 @@ class RuntimeMotionestContextV1(StrictModel):
     inputs_source: Literal["legacy_profile", "v1", "safe_fallback"]
     input_diagnostics: list[RuntimeInputDiagnostic]
     context: MotionestContextV1
+    goal_evidence: GoalEvidenceV1 | None
 
 
 def _unknown_subjective_context() -> SubjectiveContextV1:
@@ -334,9 +336,21 @@ def build_runtime_motionest_context(
             athlete_state=athlete,
             reference_date=resolved_reference,
         )
+        goal_evidence = (
+            build_goal_evidence_v1(
+                inputs.goal,
+                athlete,
+                summary,
+                confidence,
+                reference_date=resolved_reference,
+            )
+            if inputs.goal is not None
+            else None
+        )
     return RuntimeMotionestContextV1(
         reference_date=resolved_reference.isoformat(),
         inputs_source=inputs_source,
         input_diagnostics=inputs.migration_diagnostics,
         context=context,
+        goal_evidence=goal_evidence,
     )
