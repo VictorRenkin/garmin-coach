@@ -44,13 +44,13 @@ Principes non négociables :
 | Pipeline concurrent borné | DONE | 3 workers par défaut, plage 1–5, capacité bornée, clients/sessions distincts | Tuning réel Garmin à conserver prudemment; streaming a une file producteur de taille 1. |
 | Gestion 429 | DONE dans l'import | contrôleur global, Retry-After, pause, réduction de concurrence, compteurs | Ne couvre pas nécessairement toutes les autres routes Garmin legacy. |
 | Historique local unifié | DONE | multisport prioritaire, fallback legacy contrôlé, détails paresseux, scope figé | Le reste de l'application consomme encore partiellement l'ancien stockage. |
-| TrainingHistorySummary V1 | DONE comme contrat | agrégats compacts, fenêtres 28/84 jours/historique, multisport, tendances, preuves | Pas branché au parcours runtime. |
-| DataConfidence V1 | DONE comme contrat | confiance par composant, données manquantes/stale/warnings, Recovery indisponible explicite | Pas branché au parcours runtime. |
-| AthleteState V1 | DONE comme contrat | état factuel, capacité et limites, sans prédiction ni Recovery inventée | Pas branché au parcours runtime. |
+| TrainingHistorySummary V1 | DONE comme contrat | agrégats compacts, fenêtres 28/84 jours/historique, multisport, tendances, preuves | Construit à la demande par l'orchestrateur runtime; les autres flux legacy ne le consomment pas encore. |
+| DataConfidence V1 | DONE comme contrat | confiance par composant, données manquantes/stale/warnings, Recovery indisponible explicite | Construit à la demande par l'orchestrateur runtime; les prompts legacy restent exclus. |
+| AthleteState V1 | DONE comme contrat | état factuel, capacité et limites, sans prédiction ni Recovery inventée | Construit à la demande par l'orchestrateur runtime. |
 | Goal V1 | DONE comme contrat | intentions `progress`, `race`, `beginner`, `comeback`, validation stricte, adaptateur legacy | L'UI persiste encore `objective` legacy. |
 | Availability V1 | DONE comme contrat | jours, préférence de fréquence, jours de sortie longue, date d'effet, adaptateur legacy | L'UI persiste encore `availableDays`/`sessionsPerWeek`. |
 | SubjectiveContext V1 | DONE comme contrat | douleur explicite/unknown, préférences, activités non enregistrées, adaptateur legacy | L'UI actuelle ne collecte pas tout le contrat minimal cible. |
-| MotionestContext V1 | DONE comme contrat | intégration compacte et déterministe, blocages techniques vs limitations sportives | Pas encore construit ni persisté/orchestré dans le flux utilisateur. |
+| MotionestContext V1 | DONE comme contrat | intégration compacte et déterministe, blocages techniques vs limitations sportives | Construit sur `GET /api/onboarding`; non transmis aux prompts legacy. |
 | Génération et publication legacy | PARTIAL / LEGACY | `training_cycle.py`, `garmin_workouts.py`, acceptation de proposition | N'utilise pas MotionestContext V1 ni GoalFeasibility/PlanConstraints V2. |
 | Dashboard actuel | PARTIAL / LEGACY | activités, objectif, plan, coach, détails, actions | Mélange stockage legacy et cible; ce n'est pas le dashboard final. |
 | Strava | DEFERRED / LEGACY | import manuel d'un export CSV de courses | Pas d'API/OAuth, pas de SourceAdapter canonique, pas de déduplication multisource. |
@@ -58,11 +58,12 @@ Principes non négociables :
 
 ### 2.2 Ce que « DONE » signifie ici
 
-`DONE comme contrat` signifie : schéma V1 strict, constructeur déterministe, sortie compacte et tests dédiés. Cela ne signifie pas que la brique est déjà appelée par le dashboard, l'onboarding ou la génération de plan. La connexion de ces contrats au parcours produit reste à faire.
+`DONE comme contrat` signifie : schéma V1 strict, constructeur déterministe, sortie compacte et tests dédiés. Depuis l'orchestration runtime, ces sept contrats sont aussi construits à la demande par le point réel `/api/onboarding`. Ils ne pilotent pas encore l'onboarding V2, GoalFeasibility, les prompts ou la génération de plan.
 
 ### 2.3 Tests au point de référence
 
 - Baseline annoncée et confirmée avant cette tâche : **513 tests réussis**, **0 échec**, **4 warnings externes `garminconnect`**.
+- La revue de robustesse ajoute des scénarios d'autorité V1, fingerprint, concurrence et remplacement atomique. Exécution monolithique sur la branche : **527 réussis, 1 échec**, le seul échec étant `test_logout_endpoints_expire_only_the_expected_session_cookie` sur `WinError 10053`; ce test réussit isolément (**1 réussi**) et le problème est déjà reproductible sur `main`. Aucun code d'authentification n'a été modifié pour le masquer. Les **4 warnings externes `garminconnect`** restent inchangés.
 - Le nombre seul n'est pas une preuve suffisante : chaque scénario métier critique doit avoir un test explicite à la bonne couche.
 
 ## 3. Parcours utilisateur cible A → Z
@@ -104,6 +105,7 @@ Garmin n'est jamais une identité Motionest. Une reconnexion Garmin ne réinitia
 - [x] TrainingHistorySummary V1, DataConfidence V1 et AthleteState V1.
 - [x] Goal V1, Availability V1 et SubjectiveContext V1.
 - [x] MotionestContext V1 avec distinction blocage technique/limitation sportive.
+- [x] Orchestration runtime V1 appelée par `/api/onboarding`, avec migration legacy idempotente.
 
 ### EN COURS / PARTIEL
 
@@ -114,7 +116,6 @@ Garmin n'est jamais une identité Motionest. Une reconnexion Garmin ne réinitia
 
 ### À FAIRE
 
-- [ ] Orchestration runtime des contrats V1.
 - [ ] GoalFeasibility.
 - [ ] Fréquence recommandée, confirmation et PlanConstraints.
 - [ ] Onboarding V2 et écran de compréhension.
@@ -136,7 +137,7 @@ Garmin n'est jamais une identité Motionest. Une reconnexion Garmin ne réinitia
 | Compréhension déterministe athlète | DONE | Summary, confiance et AthleteState disponibles comme contrats. |
 | Contrats utilisateur | DONE | Goal, Availability et SubjectiveContext disponibles comme contrats. |
 | Intégration du contexte | DONE | MotionestContext V1 existe comme contrat pur. |
-| Intégration runtime des contrats V1 | TODO | Les builders ne sont appelés que dans les tests. |
+| Intégration runtime des contrats V1 | DONE | Construction locale à la demande via `/api/onboarding`; déclarations V1 versionnées et migration legacy idempotente. |
 | GoalFeasibility | TODO | Prochaine brique métier recommandée. |
 | Fréquence recommandée / décision | TODO | Dépend de GoalFeasibility. |
 | Onboarding V2 | TODO | Doit persister les contrats V1 et les confirmations. |
@@ -407,7 +408,7 @@ Builder pur, sortie compacte IA, contrôles de dates et de cohérence, statuts `
 
 **CE QUI RESTE À FAIRE**
 
-Créer l'orchestration runtime qui construit ce contexte depuis les sources V1 persistées.
+GoalFeasibility et les futures couches de décision pourront consommer ce contexte runtime. Les prompts et la génération legacy restent volontairement inchangés.
 
 **TESTS REQUIS**
 
@@ -415,7 +416,7 @@ Chaque intention, historique vide/faible/riche, Recovery absent, douleur, contra
 
 **CRITÈRE DE FIN**
 
-Atteint pour le contrat V1; l'intégration runtime est suivie séparément.
+Atteint pour le contrat V1 et son utilisation par l'orchestrateur runtime; aucune responsabilité de faisabilité ou de planification n'a été ajoutée.
 
 **NE PAS FAIRE À CETTE ÉTAPE**
 
@@ -423,7 +424,7 @@ Juger la faisabilité, conseiller une fréquence ou générer un plan.
 
 ### Phase 5 — Orchestration runtime des contrats V1
 
-**STATUS : TODO**
+**STATUS : DONE**
 
 **OBJECTIF**
 
@@ -447,11 +448,11 @@ Ordre déterministe; aucune lecture réseau/IA; invalidation quand historique, G
 
 **CE QUI EXISTE DÉJÀ**
 
-Tous les builders et adaptateurs nécessaires; historique local unifié.
+`build_runtime_motionest_context(user_id)` relit les déclarations et l'historique local, aligne tous les builders sur la référence figée de l'import (ou une date explicite), puis construit Summary → DataConfidence → AthleteState → MotionestContext. `motionest_inputs_v1.json` persiste Goal, Availability et SubjectiveContext dans l'espace utilisateur avec schéma strict et remplacement atomique. La migration depuis `profile.json.objective` est idempotente, conserve le fichier legacy, expose ses diagnostics et suit son empreinte pour recalculer après modification. Un store portant `source: v1` est toujours prioritaire et n'est jamais réécrit depuis le legacy. La décision lecture/comparaison/écriture est sérialisée pour deux requêtes concurrentes. Le dashboard appelle réellement cette orchestration via `GET /api/onboarding`.
 
 **CE QUI RESTE À FAIRE**
 
-Définir stockage/cache, orchestration, versioning, invalidation et endpoint interne; remplacer progressivement les lectures directes legacy.
+Onboarding V2 devra écrire directement les contrats avec `save_motionest_inputs_v1()` puis retirer progressivement le writer legacy. L'écriture déclenchée aujourd'hui par `GET /api/onboarding` est uniquement un bridge de migration legacy temporaire; elle disparaîtra avec ce writer V2. La construction reste volontairement à la demande et non mise en cache : mesurer son coût en production avant d'introduire un cache avec empreinte d'entrées.
 
 **TESTS REQUIS**
 
@@ -459,7 +460,7 @@ Intégration de bout en bout des builders, changement d'entrée, corruption, iso
 
 **CRITÈRE DE FIN**
 
-Le contexte réel d'un utilisateur est construit sans fixture de test et sans historique brut envoyé à l'IA.
+Atteint : le contexte réel est construit sur un point runtime utilisé, sans fixture, Garmin, IA, publication ni persistance d'un contexte calculé susceptible de devenir périmé.
 
 **NE PAS FAIRE À CETTE ÉTAPE**
 
@@ -1266,18 +1267,17 @@ Recovery/Health peut être absent du premier MVP si `unavailable` est correcteme
 
 ## 13. Ordre recommandé à partir de maintenant
 
-1. Orchestration runtime des contrats V1, petite couche pure et testée.
-2. GoalFeasibility V1.
-3. Fréquence recommandée, confirmation et PlanConstraints.
-4. Onboarding V2 persistant les contrats.
-5. Écran de compréhension.
-6. Contrat IA V2 et prompt compact.
-7. PlanProposal V2 et validation locale.
-8. Acceptation/publication Garmin V2.
-9. Dashboard minimal V2.
-10. Analyse post-activité et adaptation de base.
-11. Hardening/migration/observabilité en continu, puis gate production.
-12. Recovery/Health selon promesse MVP; statistiques et Strava après le MVP.
+1. GoalFeasibility V1.
+2. Fréquence recommandée, confirmation et PlanConstraints.
+3. Onboarding V2 écrivant directement les contrats V1.
+4. Écran de compréhension.
+5. Contrat IA V2 et prompt compact.
+6. PlanProposal V2 et validation locale.
+7. Acceptation/publication Garmin V2.
+8. Dashboard minimal V2.
+9. Analyse post-activité et adaptation de base.
+10. Hardening/migration/observabilité en continu, puis gate production.
+11. Recovery/Health selon promesse MVP; statistiques et Strava après le MVP.
 
 Dépendances critiques : contexte runtime avant faisabilité; faisabilité avant recommandation; fréquence confirmée avant PlanConstraints; décisions avant IA; validation locale avant acceptation; acceptation avant Garmin; activité canonique et déduplication avant multi-source.
 

@@ -81,6 +81,7 @@ from .onboarding import (
     mark_profile_ready,
     update_garmin_setup,
 )
+from .runtime_context import build_runtime_motionest_context
 from .summary import is_running
 from .storage import load_activities
 from .sync import sync_once
@@ -961,7 +962,42 @@ class DashboardHandler(BaseHTTPRequestHandler):
             _json_response(self, coach_ai_status())
             return
         if path == "/api/onboarding":
-            _json_response(self, {"onboarding": load_onboarding()})
+            user_id = current_user_id()
+            try:
+                runtime = (
+                    build_runtime_motionest_context(user_id)
+                    if user_id
+                    else None
+                )
+                runtime_payload: dict[str, Any] = (
+                    runtime.model_dump(mode="json")
+                    if runtime is not None
+                    else {
+                        "schema_version": 1,
+                        "status": "unavailable",
+                        "diagnostics": [{"code": "authenticated_user_missing"}],
+                    }
+                )
+            except Exception as exc:
+                # Keep the existing onboarding readable if local runtime data is
+                # damaged. Log only an opaque user id and exception type.
+                LOGGER.warning(
+                    "Motionest runtime context unavailable for %s (%s)",
+                    user_id,
+                    type(exc).__name__,
+                )
+                runtime_payload = {
+                    "schema_version": 1,
+                    "status": "unavailable",
+                    "diagnostics": [{"code": "runtime_context_unavailable"}],
+                }
+            _json_response(
+                self,
+                {
+                    "onboarding": load_onboarding(),
+                    "motionestRuntime": runtime_payload,
+                },
+            )
             return
         if path == "/api/garmin/setup-status":
             _json_response(
