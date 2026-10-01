@@ -119,7 +119,7 @@ Garmin n'est jamais une identité Motionest. Une reconnexion Garmin ne réinitia
 
 ### À FAIRE
 
-- [ ] TrainingPattern / RunningSessionClassification V1 : types de séances et compétitions passées réellement identifiables.
+- [x] TrainingPatternEvidence V1 : faits de structure des séances et compétitions passées explicitement identifiables, branchés au runtime local.
 - [ ] AI Goal Assessment V1 : jugement sportif expliqué à partir de GoalEvidence.
 - [ ] Fréquence recommandée, confirmation et PlanConstraints.
 - [ ] Onboarding V2 et écran de compréhension.
@@ -143,7 +143,7 @@ Garmin n'est jamais une identité Motionest. Une reconnexion Garmin ne réinitia
 | Intégration du contexte | DONE | MotionestContext V1 existe comme contrat pur. |
 | Intégration runtime des contrats V1 | DONE | Construction locale à la demande via `/api/onboarding`; déclarations V1 versionnées et migration legacy idempotente. |
 | GoalEvidence | DONE | Contrat V1 pur, faits versionnés et intégration runtime `/api/onboarding`; aucun verdict sportif. |
-| TrainingPattern / Session Classification | TODO | Future classification factuelle des séances et compétitions identifiables; responsabilité séparée de GoalEvidence. |
+| TrainingPatternEvidence V1 | DONE | Contrat compact, déterministe et runtime : intervalles structurés explicites, longue sortie relative, course explicite, intensité agrégée, provenance et limites. |
 | AI Goal Assessment | TODO | Future interprétation IA des preuves, avec explication, incertitude et réserves. |
 | Fréquence recommandée / décision | TODO | Dépend du futur GoalAssessment. |
 | Onboarding V2 | TODO | Doit persister les contrats V1 et les confirmations. |
@@ -520,9 +520,9 @@ Atteint : chaque fait est reproductible, qualifié par la confiance disponible e
 
 Juger la faisabilité, recommander une fréquence, générer des séances ou appeler l'IA.
 
-### Phase 6 bis — TrainingPattern / RunningSessionClassification V1
+### Phase 6 bis — TrainingPatternEvidence V1
 
-**STATUS : TODO**
+**STATUS : DONE**
 
 **OBJECTIF**
 
@@ -530,7 +530,17 @@ Exposer factuellement les types de séances réellement observables et les comp�
 
 **SORTIES CIBLES**
 
-Classification structurée des séances (`easy`, `recovery`, `long_run`, `intervals`, `tempo` lorsque démontrable) et futur `PastRaceEvidence`, avec confiance et provenance explicites.
+`TrainingPatternEvidenceV1` expose des agrégats 28/84 jours pour `structured_intervals`, `relative_long_run`, `race`, la couverture des sessions ayant au moins un pattern observé, les faits d'intensité existants et `PastRaceEvidence` uniquement lorsqu'un type d'événement Garmin explicite est présent. Les patterns ne sont pas exclusifs : une session portant plusieurs patterns ne compte qu'une fois dans `pattern_coverage`. Chaque résultat conserve provenance, confiance et limitations.
+
+La règle reste volontairement conservatrice : variation d'allure ou de fréquence cardiaque, nom, record personnel, fastest split et distance standard ne produisent aucun label d'intention. `easy`, `recovery`, `tempo`, `threshold` et `progression` ne sont pas déduits en V1.
+
+Le builder pur reçoit des faits session sans identifiant. Le collecteur lit seulement l'historique local unifié et les détails déjà persistés ; aucun appel Garmin, réseau ou IA. Le runtime expose le contrat comme frère de `context` et `goal_evidence`, sans modifier `MotionestContextV1`.
+
+Le contrat distingue la couverture du champ Garmin `eventType`, les valeurs informatives et les signaux explicites `race`/`competition`. `uncategorized` indique uniquement que le champ a été inspecté : il ne constitue ni une preuve de course ni une preuve fiable d'absence de course. TrainingPattern est recalculé à la demande. Le scan des fichiers de détails historiques doit être mesuré sur des historiques plus importants avant toute optimisation ou mise en cache.
+
+**PREUVES**
+
+Tests dédiés : historique vide, sans running ou sans détails, typed splits, effort/récupération répétés, longue sortie relative, faux signaux de course, course explicite, intensité présente/absente, multisport, non-classifié, provenance, confiance, déterminisme, confidentialité, absence d'I/O externe et performance.
 
 **NE PAS FAIRE DANS GOALEVIDENCE**
 

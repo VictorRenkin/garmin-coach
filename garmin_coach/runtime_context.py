@@ -36,6 +36,11 @@ from .subjective_context import (
     subjective_context_from_legacy_objective,
 )
 from .training_history_summary import build_training_history_summary
+from .training_pattern import (
+    TrainingPatternEvidenceV1,
+    build_training_pattern_evidence_v1,
+    collect_local_training_pattern_inputs,
+)
 
 
 SCHEMA_VERSION = 1
@@ -76,6 +81,7 @@ class RuntimeMotionestContextV1(StrictModel):
     input_diagnostics: list[RuntimeInputDiagnostic]
     context: MotionestContextV1
     goal_evidence: GoalEvidenceV1 | None
+    training_pattern: TrainingPatternEvidenceV1
 
 
 def _unknown_subjective_context() -> SubjectiveContextV1:
@@ -347,10 +353,17 @@ def build_runtime_motionest_context(
             if inputs.goal is not None
             else None
         )
+        training_pattern = build_training_pattern_evidence_v1(
+            summary,
+            confidence,
+            collect_local_training_pattern_inputs(),
+            reference_date=resolved_reference,
+        )
     return RuntimeMotionestContextV1(
         reference_date=resolved_reference.isoformat(),
         inputs_source=inputs_source,
         input_diagnostics=inputs.migration_diagnostics,
         context=context,
         goal_evidence=goal_evidence,
+        training_pattern=training_pattern,
     )

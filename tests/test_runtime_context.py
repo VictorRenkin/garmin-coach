@@ -113,6 +113,10 @@ def test_runtime_handles_empty_limited_and_rich_history() -> None:
         assert result.context.integration.blocking_issues == []
         assert result.goal_evidence is not None
         assert result.goal_evidence.status == "insufficient_data"
+        assert result.training_pattern.schema_version == 1
+        assert result.training_pattern.running.sessions_last_84_days == sum(
+            index % 5 != 0 for index in range(count)
+        )
 
     assert statuses[0] == ("insufficient_data", "partial", 0)
     assert statuses[1][0] == "partial"
@@ -460,6 +464,11 @@ def test_dashboard_onboarding_endpoint_builds_runtime_without_external_calls(
     assert runtime["context"]["training_history_summary"]["activity_count"] == 1
     assert runtime["goal_evidence"]["schema_version"] == 1
     assert runtime["goal_evidence"]["status"] == "insufficient_data"
+    assert runtime["training_pattern"]["schema_version"] == 1
+    assert (
+        runtime["training_pattern"]["pattern_coverage"]["eligible_sessions"]
+        == 0
+    )
     exposed = json.dumps(runtime, ensure_ascii=False)
     for forbidden_value in (
         "Private activity",
