@@ -48,6 +48,11 @@ from .garmin import (
     stored_tokens_available,
 )
 from .garmin_setup import setup_status, start_initial_setup
+from .goal_assessment import (
+    GoalAssessmentError,
+    generate_goal_assessment,
+    get_goal_assessment_state,
+)
 from .history_import import (
     initialize_history_import,
     load_history_import,
@@ -999,6 +1004,38 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 },
             )
             return
+        if path == "/api/goal-assessment":
+            user_id = current_user_id()
+            if not user_id:
+                _json_response(
+                    self,
+                    {"ok": False, "message": "Utilisateur Motionest indisponible."},
+                    401,
+                )
+                return
+            try:
+                state = get_goal_assessment_state(user_id)
+            except GoalAssessmentError as exc:
+                _json_response(
+                    self,
+                    {
+                        "ok": True,
+                        "status": "missing",
+                        "assessment": None,
+                        "diagnostics": [exc.code],
+                    },
+                )
+                return
+            except Exception:
+                LOGGER.exception("Lecture GoalAssessment indisponible")
+                _json_response(
+                    self,
+                    {"ok": False, "message": "GoalAssessment est indisponible."},
+                    500,
+                )
+                return
+            _json_response(self, {"ok": True, **state.model_dump(mode="json")})
+            return
         if path == "/api/garmin/setup-status":
             _json_response(
                 self,
@@ -1276,6 +1313,49 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 },
                 202,
             )
+            return
+        if path == "/api/goal-assessment":
+            user_id = current_user_id()
+            if not user_id:
+                _json_response(
+                    self,
+                    {"ok": False, "message": "Utilisateur Motionest indisponible."},
+                    401,
+                )
+                return
+            try:
+                state = generate_goal_assessment(user_id)
+            except GoalAssessmentError as exc:
+                status = {
+                    "goal_unavailable": 409,
+                    "ai_not_configured": 503,
+                    "provider_unavailable": 502,
+                    "provider_timeout": 504,
+                    "provider_rate_limited": 429,
+                    "provider_quota_exhausted": 503,
+                    "invalid_provider_response": 502,
+                    "unknown_supporting_fact": 502,
+                    "supporting_fact_required": 502,
+                    "assessment_scope_mismatch": 502,
+                    "assessment_scope_incompatible": 502,
+                    "confidence_incompatible": 502,
+                    "duplicate_supporting_fact": 502,
+                }.get(exc.code, 422)
+                _json_response(
+                    self,
+                    {"ok": False, "code": exc.code, "message": str(exc)},
+                    status,
+                )
+                return
+            except Exception:
+                LOGGER.exception("Génération GoalAssessment indisponible")
+                _json_response(
+                    self,
+                    {"ok": False, "message": "GoalAssessment est indisponible."},
+                    500,
+                )
+                return
+            _json_response(self, {"ok": True, **state.model_dump(mode="json")})
             return
         if path == "/api/garmin/setup-retry":
             user_id = current_user_id()

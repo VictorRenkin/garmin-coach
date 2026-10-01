@@ -120,7 +120,7 @@ Garmin n'est jamais une identité Motionest. Une reconnexion Garmin ne réinitia
 ### À FAIRE
 
 - [x] TrainingPatternEvidence V1 : faits de structure des séances et compétitions passées explicitement identifiables, branchés au runtime local.
-- [ ] AI Goal Assessment V1 : jugement sportif expliqué à partir de GoalEvidence.
+- [x] AI Goal Assessment V1 : interprétation structurée, groundée et explicitement déclenchée depuis les faits V1.
 - [ ] Fréquence recommandée, confirmation et PlanConstraints.
 - [ ] Onboarding V2 et écran de compréhension.
 - [ ] Contrat IA V2, PlanProposal V2 et validation locale.
@@ -144,7 +144,7 @@ Garmin n'est jamais une identité Motionest. Une reconnexion Garmin ne réinitia
 | Intégration runtime des contrats V1 | DONE | Construction locale à la demande via `/api/onboarding`; déclarations V1 versionnées et migration legacy idempotente. |
 | GoalEvidence | DONE | Contrat V1 pur, faits versionnés et intégration runtime `/api/onboarding`; aucun verdict sportif. |
 | TrainingPatternEvidence V1 | DONE | Contrat compact, déterministe et runtime : intervalles structurés explicites, longue sortie relative, course explicite, intensité agrégée, provenance et limites. |
-| AI Goal Assessment | TODO | Future interprétation IA des preuves, avec explication, incertitude et réserves. |
+| AI Goal Assessment | DONE | Input compact, prompt versionné, sortie Pydantic, supporting facts whitelistés, cache fingerprinté et endpoints GET/POST séparés. |
 | Fréquence recommandée / décision | TODO | Dépend du futur GoalAssessment. |
 | Onboarding V2 | TODO | Doit persister les contrats V1 et les confirmations. |
 | Écran de compréhension | TODO | Dépend de l'orchestration des contrats. |
@@ -548,7 +548,7 @@ Déduire ou classer des séances, détecter des courses passées ou modifier une
 
 ### Phase 6 ter — AI Goal Assessment
 
-**STATUS : TODO**
+**STATUS : DONE**
 
 **OBJECTIF**
 
@@ -556,23 +556,25 @@ Interpréter `GoalEvidenceV1` avec l'IA et produire un jugement sportif expliqu�
 
 **ENTRÉES**
 
-GoalEvidence V1, futur TrainingPattern V1 et le contexte minimal utile déjà structuré.
+GoalEvidence V1, TrainingPatternEvidence V1 et le contexte Motionest minimal utile déjà structuré.
 
 **SORTIES**
 
-Futur `GoalAssessmentV1` structuré : assessment, explanation, supporting_facts, uncertainty et caveats.
+`GoalAssessmentV1` structuré : scope, assessment, confiance, résumé, explication, supporting facts, incertitudes et réserves.
 
 **DÉPENDANCES**
 
-Phases 6 et 6 bis, puis futur contrat IA sécurisé.
+Phases 6 et 6 bis. L'appel est explicite via `POST /api/goal-assessment`; `GET` lit seulement le cache et `/api/onboarding` reste local.
 
 **RÈGLES MÉTIER**
 
-L'IA interprète et explique; elle ne modifie pas les preuves, ne fabrique pas de chrono et rend l'incertitude visible. La sortie doit être validée localement.
+L'IA interprète et explique; elle ne modifie pas les preuves, ne fabrique pas de chrono et rend l'incertitude visible. La sortie est validée localement, notamment le scope et chaque path de supporting fact.
 
-**CE QUI RESTE À FAIRE**
+**PREUVES**
 
-Figer le schéma, le prompt, les valeurs d'assessment, la validation, les politiques d'erreur et les tests mockés. Aucun de ces éléments n'est implémenté dans la Phase 6.
+Le payload exclut les activités brutes et textes libres sensibles. Le fingerprint couvre les faits, les versions et le contenu réel du prompt via son digest; le store utilisateur est atomique et ne persiste ni le payload ni le prompt. Les objectifs non-race retournent localement `not_applicable` sans appel IA. Les erreurs provider ne produisent aucun verdict de secours. Les tests mockés couvrent scopes, grounding, cache, invalidation, concurrence, isolation et confidentialité. La protection anti-double génération est ciblée par store utilisateur et reste mono-processus ; un déploiement multi-processus devra utiliser une coordination partagée.
+
+Cette brique ne marque pas le contrat IA V2 général comme terminé : elle couvre uniquement la frontière GoalAssessment.
 
 ### Phase 7 — Fréquence recommandée et PlanningDecision
 
