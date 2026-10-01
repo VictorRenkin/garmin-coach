@@ -96,6 +96,32 @@ def build(inputs: dict[str, Any], **updates: Any) -> motionest_context.Motionest
     )
 
 
+def empty_history_inputs(
+    integrated_inputs: dict[str, Any], selected_goal: goal.GoalV1
+) -> dict[str, Any]:
+    user_id = f"u_empty_{selected_goal.intent}"
+    with config.user_context(user_id):
+        history_import.initialize_history_import("all", reference_date=REFERENCE)
+        summary = summary_module.build_training_history_summary(
+            reference_date=REFERENCE
+        )
+    confidence = data_confidence.build_data_confidence(
+        summary,
+        objective=goal.goal_context_for_legacy_confidence(selected_goal),
+        reference_date=REFERENCE,
+    )
+    athlete = athlete_state.build_athlete_state(
+        summary, confidence, reference_date=REFERENCE
+    )
+    return {
+        **integrated_inputs,
+        "goal": selected_goal,
+        "training_history_summary": summary,
+        "data_confidence": confidence,
+        "athlete_state": athlete,
+    }
+
+
 def test_all_valid_contracts_are_integrated(
     integrated_inputs: dict[str, Any],
 ) -> None:
@@ -170,17 +196,58 @@ def test_rich_history_is_exposed_without_rescan(
     assert result.athlete_state.status == "available"
 
 
-def test_insufficient_athlete_state_is_blocking(
+def test_beginner_with_empty_history_is_partial_not_blocking(
     integrated_inputs: dict[str, Any],
 ) -> None:
-    insufficient = integrated_inputs["athlete_state"].model_copy(
-        update={"status": "insufficient_data"}
+    inputs = empty_history_inputs(
+        integrated_inputs, goal.build_goal_v1("beginner")
     )
-    result = build(integrated_inputs, athlete_state=insufficient)
-    assert result.integration.status == "insufficient"
-    assert "athlete_state_insufficient" in {
-        item.code for item in result.integration.blocking_issues
+    result = build(inputs)
+    assert result.athlete_state.status == "insufficient_data"
+    assert result.integration.status == "partial"
+    assert result.integration.blocking_issues == []
+    assert "limited_training_history" in {
+        item.code for item in result.integration.limitations
     }
+
+
+def test_comeback_with_weak_history_is_not_automatically_blocking(
+    integrated_inputs: dict[str, Any],
+) -> None:
+    inputs = empty_history_inputs(
+        integrated_inputs, goal.build_goal_v1("comeback")
+    )
+    result = build(inputs)
+    assert result.integration.status == "partial"
+    assert result.integration.blocking_issues == []
+    assert "limited_training_history" in result.integration.status_reasons
+
+
+def test_progress_with_insufficient_history_exposes_evidence_limitation(
+    integrated_inputs: dict[str, Any],
+) -> None:
+    inputs = empty_history_inputs(
+        integrated_inputs, goal.build_goal_v1("progress")
+    )
+    result = build(inputs)
+    assert result.integration.status == "partial"
+    assert result.integration.blocking_issues == []
+    assert "insufficient_training_evidence" in {
+        item.code for item in result.integration.limitations
+    }
+
+
+def test_race_with_insufficient_history_can_reach_next_layer(
+    integrated_inputs: dict[str, Any],
+) -> None:
+    inputs = empty_history_inputs(
+        integrated_inputs,
+        goal.build_goal_v1("race", event_type="10k"),
+    )
+    result = build(inputs)
+    assert result.integration.status == "partial"
+    assert result.integration.blocking_issues == []
+    assert "insufficient_training_evidence" in result.integration.status_reasons
 
 
 def test_recovery_unavailable_is_nonblocking(

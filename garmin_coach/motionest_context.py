@@ -193,6 +193,19 @@ def _limitations(
     return _unique_issues(limitations)
 
 
+def _training_evidence_limitation(
+    goal: GoalV1 | None, athlete: AthleteState
+) -> ContextIssue | None:
+    if athlete.status != "insufficient_data":
+        return None
+    code = (
+        "limited_training_history"
+        if goal is not None and goal.intent in {"beginner", "comeback"}
+        else "insufficient_training_evidence"
+    )
+    return _issue(code, "athlete_state")
+
+
 def build_motionest_context_v1(
     *,
     goal: GoalV1 | None,
@@ -214,10 +227,6 @@ def build_motionest_context_v1(
         blockers.append(
             _issue("availability_absent", "availability", blocking=True)
         )
-    if athlete_state.status == "insufficient_data":
-        blockers.append(
-            _issue("athlete_state_insufficient", "athlete_state", blocking=True)
-        )
     cross_diagnostics = _cross_contract_diagnostics(
         training_history_summary, data_confidence, athlete_state, reference_date
     )
@@ -229,16 +238,28 @@ def build_motionest_context_v1(
     limitations = _limitations(
         athlete_state, data_confidence, subjective_context
     )
+    training_evidence_limitation = _training_evidence_limitation(
+        goal, athlete_state
+    )
+    if training_evidence_limitation is not None:
+        limitations = _unique_issues(
+            [*limitations, training_evidence_limitation]
+        )
 
     pain = subjective_context.pain_or_injury
     if blockers:
         status: IntegrationStatus = "insufficient"
         reasons = [item.code for item in blockers]
-    elif athlete_state.status == "partial" or pain.status == "unknown":
+    elif (
+        athlete_state.status in {"partial", "insufficient_data"}
+        or pain.status == "unknown"
+    ):
         status = "partial"
         reasons = []
         if athlete_state.status == "partial":
             reasons.append("athlete_state_partial")
+        elif training_evidence_limitation is not None:
+            reasons.append(training_evidence_limitation.code)
         if pain.status == "unknown":
             reasons.append("pain_or_injury_unknown")
     elif limitations:
