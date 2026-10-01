@@ -46,7 +46,9 @@ def prepare(user_id: str, count: int) -> None:
 
 
 class SharedProbe:
-    def __init__(self, latency: float = 0.0) -> None:
+    def __init__(
+        self, latency: float = 0.0, *, synchronize_workers: int | None = None
+    ) -> None:
         self.latency = latency
         self.lock = threading.Lock()
         self.calls: list[tuple[str, str, float]] = []
@@ -54,6 +56,11 @@ class SharedProbe:
         self.active = 0
         self.peak = 0
         self.failures: dict[tuple[str, str], list[Exception]] = {}
+        self.worker_barrier = (
+            threading.Barrier(synchronize_workers)
+            if synchronize_workers is not None
+            else None
+        )
 
     def factory(self) -> "ProbeClient":
         client = ProbeClient(self)
@@ -66,6 +73,7 @@ class ProbeClient:
     def __init__(self, probe: SharedProbe) -> None:
         self.probe = probe
         self.session = object()
+        self.synchronized = False
 
     def __getattr__(self, endpoint: str):
         if endpoint not in multisport_details.ENDPOINTS:
@@ -79,6 +87,9 @@ class ProbeClient:
                 failures = self.probe.failures.get((endpoint, activity_id), [])
                 failure = failures.pop(0) if failures else None
             try:
+                if self.probe.worker_barrier is not None and not self.synchronized:
+                    self.synchronized = True
+                    self.probe.worker_barrier.wait(timeout=5)
                 if self.probe.latency:
                     time.sleep(self.probe.latency)
                 if failure:
@@ -240,7 +251,10 @@ def test_deterministic_worker_benchmark_preserves_calls_and_results(
     for workers in (1, 3, 4, 5):
         user = f"benchmark-{workers}"
         prepare(user, 12)
-        probe = SharedProbe(0.01)
+        # Every worker's first request meets at an explicit rendezvous. This
+        # proves concurrency is possible without relying on Windows scheduling
+        # several calls inside an arbitrary sleep window.
+        probe = SharedProbe(0.001, synchronize_workers=workers)
         started = time.perf_counter()
         state = run(user, probe, workers)
         elapsed = time.perf_counter() - started
@@ -265,4 +279,4 @@ def test_deterministic_worker_benchmark_preserves_calls_and_results(
     assert {result["calls"] for result in report.values()} == {24}
     assert report[1]["peak_concurrency"] == 1
     for workers in (3, 4, 5):
-        assert 2 <= report[workers]["peak_concurrency"] <= workers
+        assert report[workers]["peak_concurrency"] == workers
