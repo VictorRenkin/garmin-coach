@@ -146,7 +146,7 @@ Garmin n'est jamais une identité Motionest. Une reconnexion Garmin ne réinitia
 | TrainingPatternEvidence V1 | DONE | Contrat compact, déterministe et runtime : intervalles structurés explicites, longue sortie relative, course explicite, intensité agrégée, provenance et limites. |
 | AI Goal Assessment | DONE | Input compact, prompt versionné, sortie Pydantic, supporting facts whitelistés, cache fingerprinté et endpoints GET/POST séparés. |
 | Fréquence recommandée / décision | DONE | Recommandation IA explicite, confirmation utilisateur persistée et PlanConstraints déterministes. |
-| Onboarding V2 | TODO | Doit persister les contrats V1 et les confirmations. |
+| Onboarding V2 | DONE | Trois étapes persistées séparément dans `motionest_inputs_v1.json`, progression V2 reprenable et aucun choix de fréquence. |
 | Écran de compréhension | TODO | Dépend de l'orchestration des contrats. |
 | Contrat IA V2 et plan V2 | TODO | Le flux IA/plan actuel est legacy. |
 | Validation locale du plan | TODO | Contraintes structurées et vérification nécessaires. |
@@ -626,7 +626,7 @@ Créer le calendrier détaillé ou assimiler disponibilité à recommandation.
 
 ### Phase 8 — Onboarding V2 minimal
 
-**STATUS : TODO**
+**STATUS : DONE**
 
 **OBJECTIF**
 
@@ -652,11 +652,11 @@ Ne pas demander niveau, kilométrage, records, allure habituelle, VO2max, sports
 
 **CE QUI EXISTE DÉJÀ**
 
-Dialogue onboarding en trois étapes et endpoint `/api/profile`; validations legacy; contrats/adaptateurs V1; routage de reprise par `onboarding.json`.
+UI mobile en trois étapes et endpoints explicites Goal, Availability et SubjectiveContext. Chaque réponse est validée par le builder V1, persistée atomiquement dans `motionest_inputs_v1.json`, puis confirmée séparément dans la progression versionnée de `onboarding.json`. La reprise utilise `current_step`; les anciens états `waiting_existing_plan`, `plan_proposed` et `complete` restent compatibles. `/api/profile` demeure disponible pour les consommateurs legacy, sans être appelé ni alimenté par l'onboarding V2.
 
 **CE QUI RESTE À FAIRE**
 
-Refondre les questions, persister les contrats versionnés, enregistrer chaque étape, reprendre après interruption, migrer les réponses legacy et séparer collecte de la recommandation.
+La présentation et la correction consolidées des faits relèvent de la Phase 9. Les consommateurs encore liés à `profile.json` seront migrés séparément.
 
 **TESTS REQUIS**
 
@@ -665,6 +665,8 @@ Quatre intentions, champs conditionnels race, reprise à chaque étape, validati
 **CRITÈRE DE FIN**
 
 Un utilisateur peut interrompre/reprendre et produit trois contrats valides sans question redondante avec Garmin.
+
+Le premier setup Garmin s'arrête désormais à `analysis_ready` après import et analyse locale. Il n'appelle plus automatiquement `generate_initial_plan()`, l'IA ou la publication Garmin.
 
 **NE PAS FAIRE À CETTE ÉTAPE**
 
@@ -696,7 +698,7 @@ Afficher objectif, activité actuelle, sports, références utiles, évolution r
 
 **CE QUI EXISTE DÉJÀ**
 
-Sorties compactes V1 et résumé Garmin legacy affiché dans l'onboarding.
+Sorties compactes V1. L'onboarding V2 ne présente plus de pseudo-observation Garmin avant la connexion.
 
 **CE QUI RESTE À FAIRE**
 
@@ -1372,7 +1374,7 @@ Dépendances critiques : contexte runtime avant GoalEvidence; TrainingPattern re
 - [ ] Compte → e-mail → login → onboarding → Garmin → import → compréhension → plan fonctionne en E2E.
 - [ ] Reconnexion et reprise n'altèrent jamais un état terminé.
 - [ ] Accès direct à chaque route sensible testé pour chaque étape utilisateur.
-- [ ] Onboarding V2 testé pour beginner, comeback, race et progress.
+- [x] Onboarding V2 testé pour beginner, comeback, race et progress.
 - [ ] Race avec/sans date et avec/sans chrono testée.
 - [ ] Multisport et activité non enregistrée testés.
 - [ ] Douleur oui/non/unknown testée et affichée avec provenance.

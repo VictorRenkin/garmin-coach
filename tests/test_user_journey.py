@@ -157,6 +157,33 @@ def test_complete_onboarding_with_garmin_opens_dashboard(
     assert determine_user_stage("u_runner") == "dashboard"
 
 
+@pytest.mark.parametrize("setup_status", ["importing", "analyzing", "error"])
+def test_ready_user_stays_in_garmin_step_until_analysis_ready(
+    isolated_journey: Path, setup_status: str
+) -> None:
+    _write_accounts(isolated_journey, {"id": "u_runner", "email_verified": True})
+    target = isolated_journey / "users" / "u_runner" / "onboarding.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        json.dumps({"status": "ready", "garmin_setup": {"status": setup_status}}),
+        encoding="utf-8",
+    )
+    _write_tokens(isolated_journey, "u_runner")
+    assert determine_user_stage("u_runner") == "connect_garmin"
+
+
+def test_analysis_ready_opens_dashboard(isolated_journey: Path) -> None:
+    _write_accounts(isolated_journey, {"id": "u_runner", "email_verified": True})
+    target = isolated_journey / "users" / "u_runner" / "onboarding.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        json.dumps({"status": "ready", "garmin_setup": {"status": "analysis_ready"}}),
+        encoding="utf-8",
+    )
+    _write_tokens(isolated_journey, "u_runner")
+    assert determine_user_stage("u_runner") == "dashboard"
+
+
 def test_garmin_tokens_are_isolated_between_users(isolated_journey: Path) -> None:
     _write_accounts(
         isolated_journey,

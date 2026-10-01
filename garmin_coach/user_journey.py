@@ -50,6 +50,8 @@ def determine_user_stage(user_id: str) -> UserJourneyStage:
             return "connect_garmin"
         setup = onboarding.get("garmin_setup")
         setup_status = str(setup.get("status") or "") if isinstance(setup, dict) else ""
-        if status == "ready" and setup_status != "plan_rejected":
+        if status == "ready":
+            if setup_status in {"analysis_ready", "plan_rejected"}:
+                return "dashboard"
             return "connect_garmin"
     return "dashboard"

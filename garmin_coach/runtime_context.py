@@ -48,6 +48,7 @@ SCHEMA_VERSION = 1
 # atomic replacement. A concurrent explicit V1 save therefore always wins by
 # order of execution and can never be overwritten from a stale legacy read.
 _WRITE_LOCK = threading.RLock()
+_UNCHANGED = object()
 _USER_ID_CHARS = frozenset(
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
 )
@@ -240,6 +241,42 @@ def save_motionest_inputs_v1(
     with user_context(user_id):
         _atomic_write_inputs(inputs)
     return inputs
+
+
+def load_motionest_inputs_v1(user_id: str) -> MotionestInputsV1:
+    """Load one user's declarations, applying the temporary legacy bridge."""
+    _validate_user_id(user_id)
+    with user_context(user_id):
+        inputs, _ = _load_or_migrate_inputs()
+    return inputs
+
+
+def update_motionest_inputs_v1(
+    user_id: str,
+    *,
+    goal: GoalV1 | None | object = _UNCHANGED,
+    availability: AvailabilityV1 | None | object = _UNCHANGED,
+    subjective_context: SubjectiveContextV1 | object = _UNCHANGED,
+) -> MotionestInputsV1:
+    """Atomically replace selected explicit declarations and preserve the rest."""
+    _validate_user_id(user_id)
+    with user_context(user_id), _WRITE_LOCK:
+        current, _ = _load_or_migrate_inputs_unlocked()
+        updated = MotionestInputsV1(
+            source="v1",
+            goal=current.goal if goal is _UNCHANGED else goal,
+            availability=(
+                current.availability if availability is _UNCHANGED else availability
+            ),
+            subjective_context=(
+                current.subjective_context
+                if subjective_context is _UNCHANGED
+                else subjective_context
+            ),
+            migration_diagnostics=current.migration_diagnostics,
+        )
+        _atomic_write_inputs(updated)
+    return updated
 
 
 def _load_or_migrate_inputs() -> tuple[MotionestInputsV1, str]:

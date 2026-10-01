@@ -431,7 +431,8 @@ def test_login_keeps_registration_only_fields_hidden_and_has_no_eye_control() ->
 def test_dashboard_opens_existing_onboarding_for_a_new_motionest_account() -> None:
     html = dashboard.TEMPLATE_FILE.read_text(encoding="utf-8")
 
-    assert "['not_started','needs_profile'].includes(state.onboarding?.status)" in html
+    assert "['not_started','needs_profile','collecting_inputs'].includes(state.onboarding?.status)" in html
+    assert "state.onboarding?.input_progress?.current_step" in html
 
 
 def test_chat_http_endpoint_queues_ai_response(tmp_path, monkeypatch) -> None:

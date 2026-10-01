@@ -48,6 +48,8 @@ from .garmin import (
     stored_tokens_available,
 )
 from .garmin_setup import setup_status, start_initial_setup
+from .availability import build_availability_v1
+from .goal import build_goal_v1
 from .goal_assessment import (
     GoalAssessmentError,
     generate_goal_assessment,
@@ -77,6 +79,7 @@ from .user_accounts import (
 )
 from .user_journey import determine_user_stage
 from .onboarding import (
+    complete_onboarding_v2_step,
     inspect_garmin_account,
     load_onboarding,
     mark_complete,
@@ -84,6 +87,7 @@ from .onboarding import (
     mark_plan_proposed,
     mark_plan_rejected,
     mark_profile_ready,
+    onboarding_v2_state,
     update_garmin_setup,
 )
 from .planning_decision import (
@@ -93,7 +97,12 @@ from .planning_decision import (
     get_planning_decision_state,
     get_planning_recommendation_state,
 )
-from .runtime_context import build_runtime_motionest_context
+from .runtime_context import (
+    build_runtime_motionest_context,
+    load_motionest_inputs_v1,
+    update_motionest_inputs_v1,
+)
+from .subjective_context import build_subjective_context_v1
 from .summary import is_running
 from .storage import load_activities
 from .sync import sync_once
@@ -975,7 +984,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/onboarding":
             user_id = current_user_id()
+            inputs = None
+            onboarding = load_onboarding()
             try:
+                inputs = load_motionest_inputs_v1(user_id) if user_id else None
+                onboarding = onboarding_v2_state(
+                    inputs_source=inputs.source if inputs is not None else "legacy_profile",
+                    inputs=inputs,
+                )
                 runtime = (
                     build_runtime_motionest_context(user_id)
                     if user_id
@@ -1006,7 +1022,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             _json_response(
                 self,
                 {
-                    "onboarding": load_onboarding(),
+                    "onboarding": onboarding,
+                    "motionestInputs": (
+                        inputs.model_dump(mode="json") if inputs is not None else None
+                    ),
                     "motionestRuntime": runtime_payload,
                 },
             )
@@ -1176,6 +1195,92 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         "motionest_session=; HttpOnly; SameSite=Strict; "
                         "Path=/; Max-Age=0"
                     )
+                },
+            )
+            return
+        if path in {
+            "/api/onboarding/goal",
+            "/api/onboarding/availability",
+            "/api/onboarding/subjective-context",
+        }:
+            user_id = current_user_id()
+            if not user_id:
+                _json_response(self, {"ok": False, "message": "Utilisateur Motionest indisponible."}, 401)
+                return
+            try:
+                content_length = int(self.headers.get("Content-Length", "0"))
+                if content_length < 0 or content_length > 16_384:
+                    raise ValueError("Requête onboarding trop volumineuse.")
+                body = json.loads(self.rfile.read(content_length) or b"{}")
+                if not isinstance(body, dict):
+                    raise ValueError("Requête onboarding invalide.")
+                now = datetime.now().astimezone().isoformat(timespec="seconds")
+                current = load_motionest_inputs_v1(user_id)
+                if path.endswith("/goal"):
+                    intent = body.get("intent")
+                    event_type = body.get("eventType") if intent == "race" else None
+                    distance_km = body.get("distanceKm") if intent == "race" else None
+                    if event_type in {"trail", "custom"} and (
+                        isinstance(distance_km, bool)
+                        or not isinstance(distance_km, (int, float))
+                        or distance_km <= 0
+                    ):
+                        raise ValueError("Une distance positive est obligatoire pour ce type de course.")
+                    existing_created = current.goal.created_at if current.goal else None
+                    goal = build_goal_v1(
+                        intent,
+                        event_type=event_type,
+                        distance_km=distance_km,
+                        race_date=(body.get("raceDate") or None) if intent == "race" else None,
+                        target_time=(body.get("targetTime") or None) if intent == "race" else None,
+                        created_at=existing_created or now,
+                        updated_at=now,
+                    )
+                    inputs = update_motionest_inputs_v1(user_id, goal=goal)
+                    step = "goal"
+                elif path.endswith("/availability"):
+                    if "sessionsPerWeek" in body:
+                        raise ValueError("La fréquence ne fait pas partie de cet onboarding.")
+                    availability = build_availability_v1(
+                        body.get("availableDays") or [],
+                        preferred_sessions_per_week=None,
+                        long_session_preferred_days=[],
+                    )
+                    inputs = update_motionest_inputs_v1(
+                        user_id, availability=availability
+                    )
+                    step = "availability"
+                else:
+                    affecting = body.get("painOrInjuryAffectingTraining")
+                    if not isinstance(affecting, bool):
+                        raise ValueError("Réponds explicitement oui ou non pour la douleur.")
+                    description = body.get("painDescription") if affecting else None
+                    activities = body.get("unrecordedActivities") or []
+                    preferences = body.get("importantPreferences") or []
+                    if not isinstance(activities, list) or not isinstance(preferences, list):
+                        raise ValueError("Contexte subjectif invalide.")
+                    subjective = build_subjective_context_v1(
+                        affecting_training=affecting,
+                        pain_description=description,
+                        unrecorded_activities=activities,
+                        important_preferences=preferences,
+                        reported_at=now,
+                    )
+                    inputs = update_motionest_inputs_v1(
+                        user_id, subjective_context=subjective
+                    )
+                    step = "subjective_context"
+                onboarding = complete_onboarding_v2_step(step)
+            except (ValueError, TypeError, json.JSONDecodeError) as exc:
+                _json_response(self, {"ok": False, "message": str(exc)}, 400)
+                return
+            _json_response(
+                self,
+                {
+                    "ok": True,
+                    "onboarding": onboarding,
+                    "motionestInputs": inputs.model_dump(mode="json"),
+                    "nextStep": onboarding.get("input_progress", {}).get("current_step"),
                 },
             )
             return

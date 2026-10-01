@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import threading
 import unicodedata
+import uuid
 from collections import Counter
 from datetime import datetime, timedelta
 from typing import Any
@@ -10,6 +13,97 @@ from typing import Any
 from .config import ONBOARDING_FILE, ensure_directories
 from .local_activity_history import iter_local_activity_history
 from .summary import is_running
+
+
+ONBOARDING_VERSION = 2
+INPUT_STEPS = ("goal", "availability", "subjective_context")
+LEGACY_COMPLETE_STATUSES = {"waiting_existing_plan", "plan_proposed", "complete"}
+_WRITE_LOCK = threading.RLock()
+
+
+def _write_onboarding(state: dict[str, Any]) -> dict[str, Any]:
+    """Validate the serialization then atomically replace onboarding progress."""
+    ensure_directories()
+    temporary = ONBOARDING_FILE.with_name(
+        f".{ONBOARDING_FILE.name}.{uuid.uuid4().hex}.tmp"
+    )
+    encoded = json.dumps(state, ensure_ascii=False, indent=2)
+    with _WRITE_LOCK:
+        try:
+            temporary.write_text(encoded, encoding="utf-8")
+            decoded = json.loads(temporary.read_text(encoding="utf-8"))
+            if not isinstance(decoded, dict):
+                raise ValueError("État onboarding invalide.")
+            os.replace(temporary, ONBOARDING_FILE)
+        finally:
+            temporary.unlink(missing_ok=True)
+    return state
+
+
+def onboarding_v2_state(*, inputs_source: str = "legacy_profile", inputs: Any = None) -> dict[str, Any]:
+    """Return or initialize explicit V2 progress without treating fallbacks as answers."""
+    with _WRITE_LOCK:
+        state = load_onboarding()
+        if str(state.get("status") or "") in LEGACY_COMPLETE_STATUSES:
+            return state
+        progress = state.get("input_progress")
+        if state.get("onboarding_version") == ONBOARDING_VERSION and isinstance(progress, dict):
+            completed = {step: progress.get(step) is True for step in INPUT_STEPS}
+        else:
+            # Existing explicit V1 declarations are authoritative. A legacy profile
+            # is considered complete only when the legacy onboarding had reached
+            # ready; incomplete legacy data merely prefills the V2 form.
+            explicit = inputs_source == "v1"
+            legacy_ready = str(state.get("status") or "") == "ready"
+            pain = getattr(getattr(inputs, "subjective_context", None), "pain_or_injury", None)
+            completed = {
+                "goal": bool((explicit or legacy_ready) and getattr(inputs, "goal", None)),
+                "availability": bool((explicit or legacy_ready) and getattr(inputs, "availability", None)),
+                "subjective_context": bool(
+                    (explicit or legacy_ready)
+                    and pain is not None
+                    and getattr(pain, "status", "unknown") != "unknown"
+                ),
+            }
+        ready = all(completed.values())
+        current = next((step for step in INPUT_STEPS if not completed[step]), "complete")
+        updated = {
+            **state,
+            "onboarding_version": ONBOARDING_VERSION,
+            "status": "ready" if ready else "collecting_inputs",
+            "input_progress": {**completed, "current_step": current},
+            "publication_allowed": False,
+        }
+        if updated != state:
+            _write_onboarding(updated)
+        return updated
+
+
+def complete_onboarding_v2_step(step: str) -> dict[str, Any]:
+    """Mark one already-persisted declaration as explicitly confirmed."""
+    if step not in INPUT_STEPS:
+        raise ValueError("Étape onboarding V2 invalide.")
+    with _WRITE_LOCK:
+        state = load_onboarding()
+        if str(state.get("status") or "") in LEGACY_COMPLETE_STATUSES:
+            return state
+        progress = state.get("input_progress")
+        completed = {
+            item: isinstance(progress, dict) and progress.get(item) is True
+            for item in INPUT_STEPS
+        }
+        completed[step] = True
+        ready = all(completed.values())
+        current = next((item for item in INPUT_STEPS if not completed[item]), "complete")
+        return _write_onboarding(
+            {
+                **state,
+                "onboarding_version": ONBOARDING_VERSION,
+                "status": "ready" if ready else "collecting_inputs",
+                "input_progress": {**completed, "current_step": current},
+                "publication_allowed": False,
+            }
+        )
 
 
 def load_onboarding() -> dict[str, Any]:
@@ -164,7 +258,7 @@ def inspect_garmin_account(
 
     del client  # Kept in the public signature for setup-call compatibility.
     activities = list(iter_local_activity_history())
-    names: list[str] = []
+    legacy_classification = existing.get("onboarding_version") != ONBOARDING_VERSION
     type_counts: Counter[str] = Counter()
     activity_count = 0
     run_count = 0
@@ -184,10 +278,8 @@ def inspect_garmin_account(
         if not is_running(item):
             continue
         run_count += 1
-        type_counts.update(_training_type_counts([item]))
-        name = str(item.get("activityName") or item.get("name") or "").strip()
-        if name and len(names) < 8:
-            names.append(name)
+        if legacy_classification:
+            type_counts.update(_training_type_counts([item]))
         distance = _distance_km(item)
         if distance is not None:
             distance_count += 1
@@ -226,7 +318,6 @@ def inspect_garmin_account(
         "frequence_hebdomadaire_recente": weekly_frequency,
         "semaines_actives_sur_4": active_weeks,
         "regularite_detectee": regular,
-        "noms_seances_exemples": names[:8],
     }
     preserved_status = str(existing.get("status") or "")
     status = (
@@ -250,11 +341,7 @@ def inspect_garmin_account(
         ],
         "publication_allowed": False,
     }
-    ensure_directories()
-    ONBOARDING_FILE.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    return payload
+    return _write_onboarding(payload)
 
 
 def update_garmin_setup(
@@ -275,11 +362,7 @@ def update_garmin_setup(
         "retryable": retryable,
         "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
     }
-    ensure_directories()
-    ONBOARDING_FILE.write_text(
-        json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    return state
+    return _write_onboarding(state)
 
 
 def onboarding_prompt(state: dict[str, Any]) -> str:
@@ -313,22 +396,14 @@ def mark_profile_ready() -> dict[str, Any]:
     state = load_onboarding()
     state["status"] = "ready"
     state["publication_allowed"] = False
-    ensure_directories()
-    ONBOARDING_FILE.write_text(
-        json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    return state
+    return _write_onboarding(state)
 
 
 def mark_complete() -> dict[str, Any]:
     state = load_onboarding()
     state["status"] = "complete"
     state["publication_allowed"] = True
-    ensure_directories()
-    ONBOARDING_FILE.write_text(
-        json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    return state
+    return _write_onboarding(state)
 
 
 def mark_existing_plan_continuation() -> dict[str, Any]:
@@ -336,11 +411,7 @@ def mark_existing_plan_continuation() -> dict[str, Any]:
     state["status"] = "waiting_existing_plan"
     state["takeover_after_existing_plan"] = True
     state["publication_allowed"] = False
-    ensure_directories()
-    ONBOARDING_FILE.write_text(
-        json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    return state
+    return _write_onboarding(state)
 
 
 def mark_plan_proposed(path: str) -> dict[str, Any]:
@@ -348,11 +419,7 @@ def mark_plan_proposed(path: str) -> dict[str, Any]:
     state["status"] = "plan_proposed"
     state["proposed_plan"] = path
     state["publication_allowed"] = False
-    ensure_directories()
-    ONBOARDING_FILE.write_text(
-        json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    return state
+    return _write_onboarding(state)
 
 
 def mark_plan_rejected(feedback: str = "") -> dict[str, Any]:
@@ -365,8 +432,4 @@ def mark_plan_rejected(feedback: str = "") -> dict[str, Any]:
         setup["status"] = "plan_rejected"
         setup["message"] = "Le plan doit être ajusté avant une nouvelle proposition."
         setup["retryable"] = False
-    ensure_directories()
-    ONBOARDING_FILE.write_text(
-        json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    return state
+    return _write_onboarding(state)

@@ -20,10 +20,8 @@ from .multisport_details import (
 from .onboarding import (
     inspect_garmin_account,
     load_onboarding,
-    mark_plan_proposed,
     update_garmin_setup,
 )
-from .training_cycle import generate_initial_plan
 
 
 LOGGER = logging.getLogger(__name__)
@@ -115,7 +113,7 @@ def _stream_paginated_details(
 
 
 def run_initial_setup(user_id: str) -> None:
-    """Importe, analyse et prépare un brouillon sans jamais le publier."""
+    """Importe et analyse localement; aucune IA ni génération de plan."""
     lock = _user_lock(user_id)
     if not lock.acquire(blocking=False):
         return
@@ -156,7 +154,7 @@ def run_initial_setup(user_id: str) -> None:
 
                 step = "analyzing"
                 update_garmin_setup(step, message="Analyse de ton historique…")
-                onboarding = inspect_garmin_account(
+                inspect_garmin_account(
                     client, force=True, preserve_status=True
                 )
 
@@ -170,12 +168,9 @@ def run_initial_setup(user_id: str) -> None:
                     )
                     return
 
-                step = "preparing_plan"
-                update_garmin_setup(step, message="Préparation de ton plan…")
-                target = generate_initial_plan(settings, onboarding)
-                mark_plan_proposed(str(target))
                 update_garmin_setup(
-                    "plan_proposed", message="Ton plan est prêt à être vérifié."
+                    "analysis_ready",
+                    message="Ton historique est prêt à être analysé par Motionest.",
                 )
             except Exception as exc:
                 LOGGER.exception("Échec du setup Garmin initial pour %s", user_id)
