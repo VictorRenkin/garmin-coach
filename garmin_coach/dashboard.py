@@ -797,8 +797,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         supplied = self.headers.get("X-Garmin-Coach-Token", "").strip()
         return hmac.compare_digest(supplied, expected)
 
-    def _local_auth_bypass(self) -> bool:
-        """Allow local UI testing without weakening a public deployment."""
+    def _loopback_request(self) -> bool:
+        """Return whether both the client and requested host are local."""
         try:
             client_is_local = ipaddress.ip_address(self.client_address[0]).is_loopback
             host = urlparse(f"//{self.headers.get('Host', '')}").hostname
@@ -811,7 +811,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
             )
         except ValueError:
             return False
-        return production_mode() and client_is_local and host_is_local
+        return client_is_local and host_is_local
+
+    def _local_account_bypass(self) -> bool:
+        """Enable the explicit no-email local account flow on loopback only."""
+        enabled = os.getenv("MOTIONEST_LOCAL_AUTH_BYPASS", "").strip().lower()
+        return enabled in {"1", "true", "yes", "on"} and self._loopback_request()
+
+    def _local_auth_bypass(self) -> bool:
+        """Allow Turnstile-free loopback testing without weakening public access."""
+        return self._loopback_request() and (
+            production_mode() or self._local_account_bypass()
+        )
 
     def _authorize_api(self, path: str) -> bool:
         if not path.startswith("/api/") or self._mobile_authorized():
@@ -1356,6 +1367,40 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         password,
                         terms_accepted=body.get("termsAccepted") is True,
                     )
+                    if self._local_account_bypass():
+                        if not confirm_email(str(account["verificationToken"])):
+                            raise ValueError("La validation locale du compte a échoué.")
+                        user_id = str(account["id"])
+                        next_step = determine_user_stage(user_id)
+                        record_login(
+                            str(account["email"]),
+                            user_id,
+                            imported=0,
+                            onboarding_complete=next_step
+                            in {"connect_garmin", "dashboard"},
+                        )
+                        user_session = create_session(user_id)
+                        _json_response(
+                            self,
+                            {
+                                "ok": True,
+                                "role": "athlete",
+                                "created": True,
+                                "verificationPending": False,
+                                "nextStep": next_step,
+                                "redirect": {
+                                    "verify_email": "/",
+                                    "onboarding": "/dashboard",
+                                    "connect_garmin": "/connect-garmin",
+                                    "dashboard": "/dashboard",
+                                }[next_step],
+                                "message": "Compte local créé et connecté.",
+                                "user": {"email": account["email"]},
+                            },
+                            status=201,
+                            headers={"Set-Cookie": session_cookie(user_session)},
+                        )
+                        return
                     verification_url = send_account_email(
                         str(account["email"]), "verify", str(account["verificationToken"])
                     )
@@ -1399,6 +1444,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         status=401,
                     )
                     return
+                if not account.get("emailVerified") and self._local_account_bypass():
+                    pending = issue_email_verification(email)
+                    if pending is None or not confirm_email(pending[1]):
+                        raise ValueError("La validation locale du compte a échoué.")
+                    account["emailVerified"] = True
                 if not account.get("emailVerified"):
                     pending = issue_email_verification(email)
                     verification_url = ""

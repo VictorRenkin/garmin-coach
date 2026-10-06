@@ -110,6 +110,11 @@ variables `SMTP_*` ainsi que `TURNSTILE_SITE_KEY` et `TURNSTILE_SECRET_KEY`.
 Turnstile n'est demandé qu'à la création du compte. Sans clés valides en
 production, l'inscription échoue de manière sécurisée.
 
+Pour tester tout le parcours local sans anti-robot ni confirmation par e-mail,
+suis les commandes de [README_LOCAL.md](README_LOCAL.md). Ce mode conserve la
+création de compte, l'unicité de l'adresse et la reprise de l'étape réelle du
+parcours utilisateur.
+
 ## Tes données restent sous ton contrôle
 
 - Les identifiants, jetons Garmin, activités, analyses et rapports sont exclus du dépôt.

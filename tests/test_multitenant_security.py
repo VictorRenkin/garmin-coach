@@ -287,6 +287,82 @@ def test_loopback_can_create_account_without_turnstile_in_local_testing(
         server.server_close()
 
 
+def test_explicit_local_mode_creates_verified_session_without_email(
+    isolated_workspaces: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MOTIONEST_LOCAL_AUTH_BYPASS", "true")
+
+    def email_must_not_be_sent(*args, **kwargs):
+        raise AssertionError("Le mode local ne doit pas envoyer d'e-mail.")
+
+    monkeypatch.setattr(dashboard, "send_account_email", email_must_not_be_sent)
+    server, thread = _serve()
+    url = f"http://127.0.0.1:{server.server_port}/api/account/register"
+    request = {
+        "email": "local-flow@example.com",
+        "password": "correct-horse-battery-staple",
+        "passwordConfirm": "correct-horse-battery-staple",
+        "termsAccepted": True,
+        "turnstileToken": "",
+        "company": "",
+    }
+    try:
+        status, payload, cookie = _post(url, request)
+
+        assert status == 201
+        assert payload["created"] is True
+        assert payload["verificationPending"] is False
+        assert payload["nextStep"] == "onboarding"
+        assert payload["redirect"] == "/dashboard"
+        assert cookie.startswith("motionest_session=")
+        stored = json.loads(user_accounts.USERS_FILE.read_text(encoding="utf-8"))[0]
+        assert stored["email_verified"] is True
+        assert "email_verification_hash" not in stored
+
+        duplicate_status, duplicate_payload, duplicate_cookie = _post(url, request)
+        assert duplicate_status == 400
+        assert "existe déjà" in duplicate_payload["message"]
+        assert not duplicate_cookie
+    finally:
+        server.shutdown()
+        thread.join(timeout=3)
+        server.server_close()
+
+
+def test_explicit_local_mode_verifies_existing_account_on_login(
+    isolated_workspaces: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MOTIONEST_LOCAL_AUTH_BYPASS", "true")
+    password = "correct-horse-battery-staple"
+    user_accounts.register_account(
+        "existing-local@example.com", password, terms_accepted=True
+    )
+
+    def email_must_not_be_sent(*args, **kwargs):
+        raise AssertionError("Le mode local ne doit pas envoyer d'e-mail.")
+
+    monkeypatch.setattr(dashboard, "send_account_email", email_must_not_be_sent)
+    server, thread = _serve()
+    try:
+        status, payload, cookie = _post(
+            f"http://127.0.0.1:{server.server_port}/api/account/login",
+            {"email": "existing-local@example.com", "password": password},
+        )
+
+        assert status == 200
+        assert payload["created"] is False
+        assert payload["nextStep"] == "onboarding"
+        assert payload["redirect"] == "/dashboard"
+        assert cookie.startswith("motionest_session=")
+        stored = json.loads(user_accounts.USERS_FILE.read_text(encoding="utf-8"))[0]
+        assert stored["email_verified"] is True
+        assert "email_verification_hash" not in stored
+    finally:
+        server.shutdown()
+        thread.join(timeout=3)
+        server.server_close()
+
+
 def test_motionest_registration_rejects_duplicate_and_short_password(
     isolated_workspaces: Path,
 ) -> None:
