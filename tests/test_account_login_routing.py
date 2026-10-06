@@ -123,8 +123,9 @@ def test_login_routes_ready_user_to_dashboard(isolated_accounts: Path) -> None:
 
 
 def test_login_keeps_unverified_user_in_verification_flow(
-    isolated_accounts: Path,
+    isolated_accounts: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.delenv("MOTIONEST_ENV", raising=False)
     password = "correct-horse-battery-staple"
     user_accounts.register_account(
         "runner@example.com", password, terms_accepted=True
@@ -136,7 +137,26 @@ def test_login_keeps_unverified_user_in_verification_flow(
     assert payload["nextStep"] == "verify_email"
     assert payload["redirect"] == "/"
     assert payload["verificationPending"] is True
+    assert payload["developmentVerificationUrl"].startswith(
+        "http://127.0.0.1:8765/verify-email?token="
+    )
     assert not cookie
+
+
+def test_production_login_never_exposes_verification_token(
+    isolated_accounts: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MOTIONEST_ENV", "production")
+    password = "correct-horse-battery-staple"
+    user_accounts.register_account(
+        "runner@example.com", password, terms_accepted=True
+    )
+
+    status, payload, _ = _login("runner@example.com", password)
+
+    assert status == 403
+    assert payload["verificationPending"] is True
+    assert "developmentVerificationUrl" not in payload
 
 
 def test_relogin_never_resets_completed_onboarding(isolated_accounts: Path) -> None:

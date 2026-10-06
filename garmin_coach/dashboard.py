@@ -22,7 +22,12 @@ from garminconnect import (
     GarthException,
 )
 
-from .account_security import public_auth_config, send_account_email, verify_human
+from .account_security import (
+    production_mode,
+    public_auth_config,
+    send_account_email,
+    verify_human,
+)
 from .ai_analysis import analyze_and_save, load_analysis
 from .activity_data import latest_hr_zone_boundaries, public_detail
 from .athlete_memory import activity_trace, load_memory
@@ -1339,7 +1344,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         "verificationPending": True,
                         "message": "Compte créé. Consulte ta messagerie pour confirmer ton adresse.",
                     }
-                    if os.getenv("MOTIONEST_ENV", "development").lower() != "production":
+                    if not production_mode():
                         response["developmentVerificationUrl"] = verification_url
                     _json_response(self, response, status=201)
                     return
@@ -1376,19 +1381,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     return
                 if not account.get("emailVerified"):
                     pending = issue_email_verification(email)
+                    verification_url = ""
                     if pending:
-                        send_account_email(pending[0], "verify", pending[1])
-                    _json_response(
-                        self,
-                        {
-                            "ok": False,
-                            "verificationPending": True,
-                            "nextStep": "verify_email",
-                            "redirect": "/",
-                            "message": "Confirme d’abord ton adresse e-mail.",
-                        },
-                        status=403,
-                    )
+                        verification_url = send_account_email(
+                            pending[0], "verify", pending[1]
+                        )
+                    response = {
+                        "ok": False,
+                        "verificationPending": True,
+                        "nextStep": "verify_email",
+                        "redirect": "/",
+                        "message": "Confirme d’abord ton adresse e-mail.",
+                    }
+                    if verification_url and not production_mode():
+                        response["developmentVerificationUrl"] = verification_url
+                    _json_response(self, response, status=403)
                     return
                 remember = body.get("remember") is True
                 user_id = str(account["id"])

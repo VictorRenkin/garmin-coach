@@ -428,6 +428,17 @@ def test_login_keeps_registration_only_fields_hidden_and_has_no_eye_control() ->
     assert "eye-icon" not in html
 
 
+def test_local_email_verification_is_a_clickable_current_origin_link() -> None:
+    html = dashboard.LANDING_FILE.read_text(encoding="utf-8")
+
+    assert 'id="localVerificationLink"' in html
+    assert "Valider mon adresse en local" in html
+    assert "verification.pathname" in html
+    assert "verification.search" in html
+    assert "if(data.developmentVerificationUrl)showLocalVerification" in html
+    assert "Mode local : ouvre ${data.developmentVerificationUrl}" not in html
+
+
 def test_dashboard_opens_existing_onboarding_for_a_new_motionest_account() -> None:
     html = dashboard.TEMPLATE_FILE.read_text(encoding="utf-8")
 
