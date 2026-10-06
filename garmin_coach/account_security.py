@@ -22,17 +22,25 @@ def production_mode() -> bool:
     return os.getenv("MOTIONEST_ENV", "development").strip().lower() == "production"
 
 
-def public_auth_config() -> dict[str, Any]:
+def public_auth_config(*, local_bypass: bool = False) -> dict[str, Any]:
     site_key = os.getenv("TURNSTILE_SITE_KEY", "").strip()
     return {
-        "turnstileRequired": production_mode(),
+        "turnstileRequired": production_mode() and not local_bypass,
         "turnstileSiteKey": site_key,
     }
 
 
-def verify_human(token: str, remote_ip: str = "", honeypot: str = "") -> bool:
+def verify_human(
+    token: str,
+    remote_ip: str = "",
+    honeypot: str = "",
+    *,
+    local_bypass: bool = False,
+) -> bool:
     if honeypot:
         return False
+    if local_bypass:
+        return True
     secret = os.getenv("TURNSTILE_SECRET_KEY", "").strip()
     if not production_mode() and not secret:
         return token == "development-pass"

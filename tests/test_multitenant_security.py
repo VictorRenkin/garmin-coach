@@ -255,6 +255,38 @@ def test_motionest_account_registration_and_login_are_independent_from_garmin(
         server.server_close()
 
 
+def test_loopback_can_create_account_without_turnstile_in_local_testing(
+    isolated_workspaces: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MOTIONEST_ENV", "production")
+    server, thread = _serve()
+    try:
+        status, auth_config = _get(
+            f"http://127.0.0.1:{server.server_port}/api/public/auth-config"
+        )
+        assert status == 200
+        assert auth_config["turnstileRequired"] is False
+
+        status, payload, _ = _post(
+            f"http://127.0.0.1:{server.server_port}/api/account/register",
+            {
+                "email": "local@example.com",
+                "password": "correct-horse-battery-staple",
+                "passwordConfirm": "correct-horse-battery-staple",
+                "termsAccepted": True,
+                "turnstileToken": "",
+                "company": "",
+            },
+        )
+        assert status == 201
+        assert payload["verificationPending"] is True
+        assert "token=" in payload["developmentVerificationUrl"]
+    finally:
+        server.shutdown()
+        thread.join(timeout=3)
+        server.server_close()
+
+
 def test_motionest_registration_rejects_duplicate_and_short_password(
     isolated_workspaces: Path,
 ) -> None:

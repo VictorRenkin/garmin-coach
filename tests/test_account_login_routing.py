@@ -147,6 +147,9 @@ def test_production_login_never_exposes_verification_token(
     isolated_accounts: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("MOTIONEST_ENV", "production")
+    monkeypatch.setattr(
+        dashboard.DashboardHandler, "_local_auth_bypass", lambda self: False
+    )
     password = "correct-horse-battery-staple"
     user_accounts.register_account(
         "runner@example.com", password, terms_accepted=True

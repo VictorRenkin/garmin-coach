@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import hmac
+import ipaddress
 import json
 import logging
 import os
@@ -796,6 +797,22 @@ class DashboardHandler(BaseHTTPRequestHandler):
         supplied = self.headers.get("X-Garmin-Coach-Token", "").strip()
         return hmac.compare_digest(supplied, expected)
 
+    def _local_auth_bypass(self) -> bool:
+        """Allow local UI testing without weakening a public deployment."""
+        try:
+            client_is_local = ipaddress.ip_address(self.client_address[0]).is_loopback
+            host = urlparse(f"//{self.headers.get('Host', '')}").hostname
+            host_is_local = bool(
+                host
+                and (
+                    host.lower() == "localhost"
+                    or ipaddress.ip_address(host).is_loopback
+                )
+            )
+        except ValueError:
+            return False
+        return production_mode() and client_is_local and host_is_local
+
     def _authorize_api(self, path: str) -> bool:
         if not path.startswith("/api/") or self._mobile_authorized():
             return True
@@ -897,7 +914,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         if path == "/api/public/auth-config":
-            _json_response(self, public_auth_config())
+            _json_response(
+                self, public_auth_config(local_bypass=self._local_auth_bypass())
+            )
             return
         if path == "/dashboard":
             body = TEMPLATE_FILE.read_bytes()
@@ -1328,6 +1347,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         str(body.get("turnstileToken") or ""),
                         self.client_address[0],
                         str(body.get("company") or ""),
+                        local_bypass=self._local_auth_bypass(),
                     ):
                         _json_response(self, {"ok": False, "message": "La vérification anti-robot a échoué."}, 400)
                         return
@@ -1344,7 +1364,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         "verificationPending": True,
                         "message": "Compte créé. Consulte ta messagerie pour confirmer ton adresse.",
                     }
-                    if not production_mode():
+                    if not production_mode() or self._local_auth_bypass():
                         response["developmentVerificationUrl"] = verification_url
                     _json_response(self, response, status=201)
                     return
@@ -1393,7 +1413,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         "redirect": "/",
                         "message": "Confirme d’abord ton adresse e-mail.",
                     }
-                    if verification_url and not production_mode():
+                    if verification_url and (
+                        not production_mode() or self._local_auth_bypass()
+                    ):
                         response["developmentVerificationUrl"] = verification_url
                     _json_response(self, response, status=403)
                     return
