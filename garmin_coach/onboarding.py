@@ -341,6 +341,8 @@ def inspect_garmin_account(
         ],
         "publication_allowed": False,
     }
+    if not legacy_classification:
+        payload.pop("required_answers", None)
     return _write_onboarding(payload)
 
 

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from garmin_coach import config, dashboard, user_accounts
+from garmin_coach import config, dashboard, onboarding, user_accounts
 from garmin_coach.availability import build_availability_v1
 from garmin_coach.goal import build_goal_v1
 from garmin_coach.onboarding import onboarding_v2_state
@@ -257,3 +257,211 @@ def test_ui_uses_v2_endpoints_without_legacy_profile_submit() -> None:
     assert "data-status=\"analysis_ready\"" in connect_html
     assert "['analysis_ready','plan_proposed','complete']" in connect_html
     assert "Préparation de ton plan" not in connect_html
+
+
+@pytest.mark.parametrize("planning_decision_exists", [False, True])
+def test_v2_create_plan_legacy_action_is_always_blocked(
+    isolated_v2: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    planning_decision_exists: bool,
+) -> None:
+    user_id = "u_v2_plan"
+    workspace = isolated_v2 / "users" / user_id
+    workspace.mkdir(parents=True)
+    (workspace / "onboarding.json").write_text(
+        json.dumps(
+            {
+                "onboarding_version": 2,
+                "status": "ready",
+                "garmin_setup": {"status": "analysis_ready"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    if planning_decision_exists:
+        (workspace / "planning_decision_v1.json").write_text(
+            json.dumps({"schema_version": 1, "status": "confirmed"}),
+            encoding="utf-8",
+        )
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        dashboard,
+        "get_message",
+        lambda message_id: {
+            "id": message_id,
+            "role": "assistant",
+            "action": "create_plan",
+        },
+    )
+    monkeypatch.setattr(
+        dashboard,
+        "generate_initial_plan",
+        lambda *args, **kwargs: calls.append("generate"),
+    )
+    monkeypatch.setattr(
+        dashboard,
+        "mark_plan_proposed",
+        lambda *args, **kwargs: calls.append("proposed"),
+    )
+    server, thread = _serve()
+    try:
+        cookie = f"motionest_session={user_accounts.create_session(user_id)}"
+        status, payload = _post(
+            server, cookie, "/api/coach/action", {"answerId": "answer-v2"}
+        )
+    finally:
+        server.shutdown(); server.server_close(); thread.join(timeout=3)
+
+    assert status == 409
+    assert payload["code"] == "planning_flow_not_ready"
+    assert calls == []
+    assert not (workspace / "plans").exists()
+
+
+def test_v2_update_objective_action_cannot_diverge_from_goal_v1(
+    isolated_v2: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user_id = "u_v2_objective"
+    update_motionest_inputs_v1(user_id, goal=build_goal_v1("beginner"))
+    workspace = isolated_v2 / "users" / user_id
+    (workspace / "onboarding.json").write_text(
+        json.dumps({"onboarding_version": 2, "status": "ready"}), encoding="utf-8"
+    )
+    profile = workspace / "profile.json"
+    profile.write_text(json.dumps({"objective": {"title": "Legacy intact"}}), encoding="utf-8")
+    original_profile = profile.read_bytes()
+    calls: list[str] = []
+    monkeypatch.setattr(
+        dashboard,
+        "get_message",
+        lambda message_id: {
+            "id": message_id,
+            "role": "assistant",
+            "action": "update_objective",
+            "objective_update": {"title": "Must not apply"},
+        },
+    )
+    monkeypatch.setattr(
+        dashboard,
+        "apply_objective_update",
+        lambda update: calls.append("objective"),
+    )
+    monkeypatch.setattr(
+        dashboard, "mark_profile_ready", lambda: calls.append("profile_ready")
+    )
+    server, thread = _serve()
+    try:
+        cookie = f"motionest_session={user_accounts.create_session(user_id)}"
+        status, payload = _post(
+            server, cookie, "/api/coach/action", {"answerId": "objective-v2"}
+        )
+    finally:
+        server.shutdown(); server.server_close(); thread.join(timeout=3)
+
+    assert status == 409
+    assert payload["code"] == "planning_flow_not_ready"
+    assert calls == []
+    assert profile.read_bytes() == original_profile
+    assert load_motionest_inputs_v1(user_id).goal.intent == "beginner"
+
+
+def test_legacy_coach_actions_remain_available(
+    isolated_v2: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user_id = "u_legacy_actions"
+    workspace = isolated_v2 / "users" / user_id
+    workspace.mkdir(parents=True)
+    target = workspace / "plans" / "draft.json"
+    target.parent.mkdir()
+    target.write_text("{}", encoding="utf-8")
+    current_action = {"value": "create_plan"}
+    events: list[str] = []
+    monkeypatch.setattr(
+        dashboard,
+        "get_message",
+        lambda message_id: {
+            "id": message_id,
+            "role": "assistant",
+            "action": current_action["value"],
+            "objective_update": {"title": "Legacy goal"},
+        },
+    )
+    monkeypatch.setattr(
+        dashboard,
+        "load_onboarding",
+        lambda: {"status": "ready", "garmin_summary": {}},
+    )
+    monkeypatch.setattr(dashboard, "stored_tokens_available", lambda: True)
+    monkeypatch.setattr(dashboard, "load_settings", lambda: object())
+    monkeypatch.setattr(
+        dashboard,
+        "generate_initial_plan",
+        lambda settings, state: events.append("generate") or target,
+    )
+    monkeypatch.setattr(
+        dashboard,
+        "mark_plan_proposed",
+        lambda path: events.append("proposed"),
+    )
+    monkeypatch.setattr(
+        dashboard,
+        "apply_objective_update",
+        lambda update: events.append("objective") or {"title": "Legacy goal"},
+    )
+    monkeypatch.setattr(
+        dashboard, "mark_profile_ready", lambda: events.append("profile_ready")
+    )
+    monkeypatch.setattr(dashboard, "mark_action_applied", lambda message_id: None)
+    server, thread = _serve()
+    try:
+        cookie = f"motionest_session={user_accounts.create_session(user_id)}"
+        assert _post(server, cookie, "/api/coach/action", {"answerId": "legacy-plan"})[0] == 200
+        current_action["value"] = "update_objective"
+        assert _post(server, cookie, "/api/coach/action", {"answerId": "legacy-goal"})[0] == 200
+    finally:
+        server.shutdown(); server.server_close(); thread.join(timeout=3)
+
+    assert events == ["generate", "proposed", "objective", "profile_ready"]
+
+
+def test_v2_garmin_inspection_drops_legacy_required_answers_and_names(
+    isolated_v2: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from garmin_coach.config import user_context
+
+    user_id = "u_v2_inspection"
+    workspace = isolated_v2 / "users" / user_id
+    workspace.mkdir(parents=True)
+    (workspace / "onboarding.json").write_text(
+        json.dumps(
+            {
+                "onboarding_version": 2,
+                "status": "ready",
+                "required_answers": ["nombre de séances possibles par semaine"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        onboarding,
+        "iter_local_activity_history",
+        lambda: iter(
+            [
+                {
+                    "activityType": {"typeKey": "running"},
+                    "activityName": "Private interval name",
+                    "distance": 5000,
+                }
+            ]
+        ),
+    )
+    with user_context(user_id):
+        state = onboarding.inspect_garmin_account(
+            object(), force=True, preserve_status=True
+        )
+
+    assert "required_answers" not in state
+    summary = state["garmin_summary"]
+    assert "noms_seances_exemples" not in summary
+    assert summary["types_entrainement_detectes"] == {}

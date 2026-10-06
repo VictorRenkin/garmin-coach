@@ -1896,6 +1896,26 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 if answer.get("action_status") in {"applied", "rejected"}:
                     raise ValueError("Cette proposition a déjà reçu une réponse.")
                 action = answer.get("action")
+                action_onboarding = load_onboarding()
+                if (
+                    action_onboarding.get("onboarding_version") == 2
+                    and action in {"create_plan", "update_objective"}
+                ):
+                    _json_response(
+                        self,
+                        {
+                            "ok": False,
+                            "code": "planning_flow_not_ready",
+                            "message": (
+                                "Confirme d'abord la recommandation d'entraînement "
+                                "avant de préparer le plan."
+                                if action == "create_plan"
+                                else "Modifie ton objectif depuis le parcours structuré Motionest."
+                            ),
+                        },
+                        status=409,
+                    )
+                    return
                 if action == "create_plan":
                     existing_plan = load_relevant_plan()
                     remaining = (
@@ -1912,7 +1932,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     result = {"objective": objective}
                     confirmation = "Objectif confirmé."
                 elif action == "create_plan":
-                    onboarding = load_onboarding()
+                    onboarding = action_onboarding
                     if onboarding.get("status") != "ready":
                         raise ValueError(
                             "Confirme d'abord l'objectif et le nombre de séances."
