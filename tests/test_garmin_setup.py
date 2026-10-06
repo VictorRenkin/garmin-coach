@@ -26,6 +26,11 @@ def _stub_import(monkeypatch, events: list[str]) -> None:
         "inspect_garmin_account",
         lambda *args, **kwargs: events.append("inspect") or {"garmin_summary": {}},
     )
+    monkeypatch.setattr(
+        garmin_setup,
+        "build_runtime_motionest_context",
+        lambda *args, **kwargs: events.append("runtime") or object(),
+    )
 
 
 def test_initial_setup_runs_in_order_and_stops_at_analysis_ready(monkeypatch) -> None:
@@ -47,6 +52,7 @@ def test_initial_setup_runs_in_order_and_stops_at_analysis_ready(monkeypatch) ->
         "details",
         "analyzing",
         "inspect",
+        "runtime",
         "analysis_ready",
     ]
 

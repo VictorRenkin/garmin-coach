@@ -18,6 +18,10 @@ from .summary import is_running
 ONBOARDING_VERSION = 2
 INPUT_STEPS = ("goal", "availability", "subjective_context")
 LEGACY_COMPLETE_STATUSES = {"waiting_existing_plan", "plan_proposed", "complete"}
+JOURNEY_CONFIRMATION_FIELDS = {
+    "observations_fingerprint",
+    "understanding_fingerprint",
+}
 _WRITE_LOCK = threading.RLock()
 
 
@@ -67,10 +71,17 @@ def onboarding_v2_state(*, inputs_source: str = "legacy_profile", inputs: Any = 
             }
         ready = all(completed.values())
         current = next((step for step in INPUT_STEPS if not completed[step]), "complete")
+        status = (
+            "ready"
+            if ready
+            else "ready_for_garmin"
+            if completed["goal"]
+            else "collecting_inputs"
+        )
         updated = {
             **state,
             "onboarding_version": ONBOARDING_VERSION,
-            "status": "ready" if ready else "collecting_inputs",
+            "status": status,
             "input_progress": {**completed, "current_step": current},
             "publication_allowed": False,
         }
@@ -95,15 +106,37 @@ def complete_onboarding_v2_step(step: str) -> dict[str, Any]:
         completed[step] = True
         ready = all(completed.values())
         current = next((item for item in INPUT_STEPS if not completed[item]), "complete")
+        status = (
+            "ready"
+            if ready
+            else "ready_for_garmin"
+            if completed["goal"]
+            else "collecting_inputs"
+        )
         return _write_onboarding(
             {
                 **state,
                 "onboarding_version": ONBOARDING_VERSION,
-                "status": "ready" if ready else "collecting_inputs",
+                "status": status,
                 "input_progress": {**completed, "current_step": current},
                 "publication_allowed": False,
             }
         )
+
+
+def record_journey_confirmation(field: str, fingerprint: str) -> dict[str, Any]:
+    """Persist a bounded first-run acknowledgement atomically."""
+    if field not in JOURNEY_CONFIRMATION_FIELDS:
+        raise ValueError("Confirmation de parcours invalide.")
+    if not re.fullmatch(r"[a-f0-9]{64}", fingerprint):
+        raise ValueError("Empreinte de confirmation invalide.")
+    with _WRITE_LOCK:
+        state = load_onboarding()
+        current = state.get("journey_confirmations")
+        confirmations = dict(current) if isinstance(current, dict) else {}
+        confirmations[field] = fingerprint
+        state["journey_confirmations"] = confirmations
+        return _write_onboarding(state)
 
 
 def load_onboarding() -> dict[str, Any]:

@@ -54,6 +54,8 @@ from .garmin import (
     stored_tokens_available,
 )
 from .garmin_setup import setup_status, start_initial_setup
+from .first_run_journey import build_first_run_journey, confirm_first_run_step
+from .goal import goal_context_for_legacy_confidence
 from .availability import build_availability_v1
 from .goal import build_goal_v1
 from .goal_assessment import (
@@ -148,6 +150,14 @@ DEFAULT_OBJECTIVE = {
 }
 
 
+def _user_stage_redirect(stage: str) -> str:
+    if stage == "verify_email":
+        return "/"
+    if stage in {"connect_garmin", "importing", "import_failed"}:
+        return "/connect-garmin"
+    return "/dashboard"
+
+
 def coach_ai_status() -> dict[str, Any]:
     settings = load_settings()
     configured = bool(settings.ai_api_key)
@@ -211,6 +221,31 @@ def save_coach_ai_config(
 
 
 def load_objective() -> dict[str, Any]:
+    user_id = current_user_id()
+    if user_id:
+        try:
+            inputs = load_motionest_inputs_v1(user_id)
+            if inputs.source == "v1" and inputs.goal is not None:
+                objective = goal_context_for_legacy_confidence(inputs.goal)
+                availability = inputs.availability
+                return {
+                    **DEFAULT_OBJECTIVE,
+                    **objective,
+                    "goalType": inputs.goal.intent,
+                    "sessionsPerWeek": (
+                        availability.preferred_sessions_per_week
+                        if availability is not None
+                        else None
+                    ),
+                    "availableDays": (
+                        availability.available_days if availability is not None else []
+                    ),
+                    "source": "motionest_inputs_v1",
+                }
+        except Exception:
+            LOGGER.warning(
+                "Canonical objective unavailable for %s", user_id
+            )
     if not PROFILE_FILE.is_file():
         return dict(DEFAULT_OBJECTIVE)
     try:
@@ -539,8 +574,27 @@ def coach_context() -> dict[str, Any]:
             for session in sessions
             if isinstance(session, dict)
         ]
+    user_id = current_user_id()
+    canonical_inputs: dict[str, Any] | None = None
+    journey: dict[str, Any] | None = None
+    planning_decision: dict[str, Any] | None = None
+    if user_id:
+        try:
+            inputs = load_motionest_inputs_v1(user_id)
+            canonical_inputs = inputs.model_dump(mode="json")
+            journey = build_first_run_journey(user_id)
+            planning_decision = journey.get("planning_decision")
+        except Exception as exc:
+            LOGGER.warning(
+                "Canonical coach context unavailable for %s (%s)",
+                user_id,
+                type(exc).__name__,
+            )
     return {
         "objectif": load_objective(),
+        "declarations_v1": canonical_inputs,
+        "etape_parcours": journey.get("stage") if journey else None,
+        "decision_frequence": planning_decision,
         "plan_actif": plan,
         "courses_recentes": [
             {key: value for key, value in activity.items() if key != "analysis"}
@@ -872,12 +926,25 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     self.send_header("Location", "/")
                     self.end_headers()
                     return
-                if path == "/dashboard" and stage == "connect_garmin":
+                if path == "/dashboard" and stage in {
+                    "connect_garmin",
+                    "importing",
+                    "import_failed",
+                }:
                     self.send_response(302)
                     self.send_header("Location", "/connect-garmin")
                     self.end_headers()
                     return
-                if path == "/connect-garmin" and stage == "onboarding":
+                if path == "/connect-garmin" and stage in {
+                    "onboarding",
+                    "review_garmin",
+                    "complete_declarations",
+                    "review_understanding",
+                    "goal_assessment",
+                    "planning_recommendation",
+                    "confirm_frequency",
+                    "ready_for_plan",
+                }:
                     self.send_response(302)
                     self.send_header("Location", "/dashboard")
                     self.end_headers()
@@ -1064,6 +1131,35 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     "motionestRuntime": runtime_payload,
                 },
             )
+            return
+        if path == "/api/first-run-journey":
+            user_id = current_user_id()
+            if not user_id:
+                _json_response(
+                    self,
+                    {"ok": False, "message": "Utilisateur Motionest indisponible."},
+                    401,
+                )
+                return
+            try:
+                journey = build_first_run_journey(user_id)
+            except Exception as exc:
+                LOGGER.warning(
+                    "First-run journey unavailable for %s (%s)",
+                    user_id,
+                    type(exc).__name__,
+                )
+                _json_response(
+                    self,
+                    {
+                        "ok": False,
+                        "stage": "import_failed",
+                        "message": "Le parcours Motionest est temporairement indisponible.",
+                    },
+                    500,
+                )
+                return
+            _json_response(self, {"ok": True, "journey": journey})
             return
         if path == "/api/goal-assessment":
             user_id = current_user_id()
@@ -1276,9 +1372,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 elif path.endswith("/availability"):
                     if "sessionsPerWeek" in body:
                         raise ValueError("La fréquence ne fait pas partie de cet onboarding.")
+                    preferred = body.get("preferredSessionsPerWeek")
                     availability = build_availability_v1(
                         body.get("availableDays") or [],
-                        preferred_sessions_per_week=None,
+                        preferred_sessions_per_week=preferred,
                         long_session_preferred_days=[],
                     )
                     inputs = update_motionest_inputs_v1(
@@ -1318,6 +1415,26 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     "nextStep": onboarding.get("input_progress", {}).get("current_step"),
                 },
             )
+            return
+        if path in {
+            "/api/first-run-journey/confirm-observations",
+            "/api/first-run-journey/confirm-understanding",
+        }:
+            user_id = current_user_id()
+            if not user_id:
+                _json_response(
+                    self,
+                    {"ok": False, "message": "Utilisateur Motionest indisponible."},
+                    401,
+                )
+                return
+            step = "observations" if path.endswith("observations") else "understanding"
+            try:
+                journey = confirm_first_run_step(user_id, step)
+            except ValueError as exc:
+                _json_response(self, {"ok": False, "message": str(exc)}, 409)
+                return
+            _json_response(self, {"ok": True, "journey": journey})
             return
         if path == "/api/manager/logout":
             _json_response(
@@ -1388,12 +1505,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                                 "created": True,
                                 "verificationPending": False,
                                 "nextStep": next_step,
-                                "redirect": {
-                                    "verify_email": "/",
-                                    "onboarding": "/dashboard",
-                                    "connect_garmin": "/connect-garmin",
-                                    "dashboard": "/dashboard",
-                                }[next_step],
+                                "redirect": _user_stage_redirect(next_step),
                                 "message": "Compte local créé et connecté.",
                                 "user": {"email": account["email"]},
                             },
@@ -1489,12 +1601,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     "role": "athlete",
                     "created": False,
                     "nextStep": next_step,
-                    "redirect": {
-                        "verify_email": "/",
-                        "onboarding": "/dashboard",
-                        "connect_garmin": "/connect-garmin",
-                        "dashboard": "/dashboard",
-                    }[next_step],
+                    "redirect": _user_stage_redirect(next_step),
                     "message": "Connexion réussie.",
                     "user": {
                         "email": account["email"],
@@ -1505,7 +1612,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/garmin/connect":
             user_id = current_user_id()
-            if not user_id or determine_user_stage(user_id) != "connect_garmin":
+            if not user_id or determine_user_stage(user_id) not in {
+                "connect_garmin",
+                "import_failed",
+            }:
                 _json_response(
                     self,
                     {"ok": False, "message": "Termine d’abord l’étape Motionest en cours."},
@@ -1714,7 +1824,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/garmin/setup-retry":
             user_id = current_user_id()
-            if not user_id or determine_user_stage(user_id) != "connect_garmin":
+            if not user_id or determine_user_stage(user_id) not in {
+                "connect_garmin",
+                "import_failed",
+            }:
                 _json_response(
                     self,
                     {"ok": False, "message": "Aucun setup Garmin à relancer."},
@@ -1873,6 +1986,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/profile":
             try:
+                user_id = current_user_id()
+                if user_id:
+                    inputs = load_motionest_inputs_v1(user_id)
+                    if inputs.source == "v1" and inputs.goal is not None:
+                        _json_response(
+                            self,
+                            {
+                                "ok": False,
+                                "code": "canonical_v1_inputs_active",
+                                "message": "Modifie cet objectif depuis le parcours Motionest.",
+                            },
+                            409,
+                        )
+                        return
                 content_length = int(self.headers.get("Content-Length", "0"))
                 body = json.loads(self.rfile.read(content_length) or b"{}")
                 objective = save_objective(body)

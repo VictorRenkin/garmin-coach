@@ -22,6 +22,7 @@ from .onboarding import (
     load_onboarding,
     update_garmin_setup,
 )
+from .runtime_context import build_runtime_motionest_context
 
 
 LOGGER = logging.getLogger(__name__)
@@ -157,6 +158,7 @@ def run_initial_setup(user_id: str) -> None:
                 inspect_garmin_account(
                     client, force=True, preserve_status=True
                 )
+                build_runtime_motionest_context(user_id)
 
                 if initial_status in {
                     "waiting_existing_plan",

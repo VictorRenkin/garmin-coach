@@ -442,8 +442,11 @@ def test_local_email_verification_is_a_clickable_current_origin_link() -> None:
 def test_dashboard_opens_existing_onboarding_for_a_new_motionest_account() -> None:
     html = dashboard.TEMPLATE_FILE.read_text(encoding="utf-8")
 
-    assert "['not_started','needs_profile','collecting_inputs'].includes(state.onboarding?.status)" in html
-    assert "state.onboarding?.input_progress?.current_step" in html
+    assert "fetch('/api/first-run-journey')" in html
+    assert "['initial_intent','complete_declarations'].includes(stage)" in html
+    assert "review_garmin" in html
+    assert "review_understanding" in html
+    assert "ready_for_plan" in html
 
 
 def test_chat_http_endpoint_queues_ai_response(tmp_path, monkeypatch) -> None:

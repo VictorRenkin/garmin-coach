@@ -121,8 +121,8 @@ Garmin n'est jamais une identité Motionest. Une reconnexion Garmin ne réinitia
 
 - [x] TrainingPatternEvidence V1 : faits de structure des séances et compétitions passées explicitement identifiables, branchés au runtime local.
 - [x] AI Goal Assessment V1 : interprétation structurée, groundée et explicitement déclenchée depuis les faits V1.
-- [ ] Fréquence recommandée, confirmation et PlanConstraints.
-- [ ] Onboarding V2 et écran de compréhension.
+- [x] Fréquence recommandée, confirmation et PlanConstraints.
+- [x] Onboarding V2 et écran de compréhension V1.
 - [ ] Contrat IA V2, PlanProposal V2 et validation locale.
 - [ ] Adaptation V2, dashboard final et production hardening.
 
@@ -147,7 +147,7 @@ Garmin n'est jamais une identité Motionest. Une reconnexion Garmin ne réinitia
 | AI Goal Assessment | DONE | Input compact, prompt versionné, sortie Pydantic, supporting facts whitelistés, cache fingerprinté et endpoints GET/POST séparés. |
 | Fréquence recommandée / décision | DONE | Recommandation IA explicite, confirmation utilisateur persistée et PlanConstraints déterministes. |
 | Onboarding V2 | DONE | Trois étapes persistées séparément dans `motionest_inputs_v1.json`, progression V2 reprenable et aucun choix de fréquence. |
-| Écran de compréhension | TODO | Dépend de l'orchestration des contrats. |
+| Écran de compréhension | DONE V1 | View-model factuel avec provenance, confirmations fingerprintées, corrections déclaratives et enchaînement assessment/recommandation/décision. |
 | Contrat IA V2 et plan V2 | TODO | Le flux IA/plan actuel est legacy. |
 | Validation locale du plan | TODO | Contraintes structurées et vérification nécessaires. |
 | Publication Garmin V2 | PARTIAL | Publication/acceptation existent, mais sont liées au plan legacy. |
@@ -646,17 +646,17 @@ Phases 3, 5 et 7 pour le flux complet; la collecte peut être développée avant
 
 **RÈGLES MÉTIER**
 
-Question 1 : intention `progress`, `race`, `beginner`, `comeback`. Si `race` : type/distance, date si connue, chrono si souhaité. Puis jours généralement disponibles. Puis douleur/blessure oui/non et courte description si oui. Facultatif : activité importante non enregistrée et préférence majeure.
+Avant Garmin : intention `progress`, `race`, `beginner`, `comeback`. Si `race` : type/distance, date si connue, chrono si souhaité. Après l'analyse Garmin : jours généralement disponibles, préférence de fréquence distincte, puis douleur/blessure oui/non et courte description si oui. Facultatif : activité importante non enregistrée et préférence majeure.
 
 Ne pas demander niveau, kilométrage, records, allure habituelle, VO2max, sports visibles dans Garmin ni texte objectif libre obligatoire.
 
 **CE QUI EXISTE DÉJÀ**
 
-UI mobile en trois étapes et endpoints explicites Goal, Availability et SubjectiveContext. Chaque réponse est validée par le builder V1, persistée atomiquement dans `motionest_inputs_v1.json`, puis confirmée séparément dans la progression versionnée de `onboarding.json`. La reprise utilise `current_step`; les anciens états `waiting_existing_plan`, `plan_proposed` et `complete` restent compatibles. `/api/profile` demeure disponible pour les consommateurs legacy, sans être appelé ni alimenté par l'onboarding V2.
+UI mobile en deux temps et endpoints explicites Goal, Availability et SubjectiveContext. L'intention est collectée avant Garmin; les disponibilités, la préférence de fréquence et le contexte subjectif sont collectés après la revue de l'import. Chaque réponse est validée par le builder V1, persistée atomiquement dans `motionest_inputs_v1.json`, puis confirmée séparément dans la progression versionnée de `onboarding.json`. La reprise utilise l'état serveur; les anciens états `waiting_existing_plan`, `plan_proposed` et `complete` restent compatibles. `/api/profile` demeure disponible pour les consommateurs legacy, tandis que ses lectures et le Coach donnent priorité au Goal V1 explicite.
 
 **CE QUI RESTE À FAIRE**
 
-La présentation et la correction consolidées des faits relèvent de la Phase 9. Les consommateurs encore liés à `profile.json` seront migrés séparément.
+Les autres consommateurs encore liés à `profile.json`, notamment la génération de plan legacy, seront migrés avec PlanProposal V2.
 
 **TESTS REQUIS**
 
@@ -674,7 +674,7 @@ Générer le plan, publier Garmin ou demander à l'utilisateur d'autoévaluer de
 
 ### Phase 9 — Écran « Voilà ce que Motionest a compris de toi »
 
-**STATUS : TODO**
+**STATUS : DONE V1**
 
 **OBJECTIF**
 
@@ -698,11 +698,11 @@ Afficher objectif, activité actuelle, sports, références utiles, évolution r
 
 **CE QUI EXISTE DÉJÀ**
 
-Sorties compactes V1. L'onboarding V2 ne présente plus de pseudo-observation Garmin avant la connexion.
+`first_run_journey.py` dérive côté serveur une étape unique et reprenable : revue Garmin, déclarations complémentaires, compréhension, GoalAssessment, recommandation, confirmation de fréquence puis `ready_for_plan`. `GET /api/first-run-journey` expose un view-model compact sans données brutes, secrets ou coordonnées. Les confirmations de revue sont persistées atomiquement avec une empreinte des faits concernés. L'UI existante affiche les faits mesurés séparément des déclarations, permet de corriger ces dernières et appelle explicitement les POST GoalAssessment, PlanningRecommendation et PlanningDecision. Aucun GET ne déclenche l'IA.
 
 **CE QUI RESTE À FAIRE**
 
-View-model avec provenance, UI accessible, navigation de correction, recalcul et confirmation.
+Polissage visuel et tests E2E navigateur supplémentaires avant production; le dashboard final reste une phase séparée.
 
 **TESTS REQUIS**
 
@@ -1340,12 +1340,12 @@ Recovery/Health peut être absent du premier MVP si `unavailable` est correcteme
 ## 13. Ordre recommandé à partir de maintenant
 
 1. GoalEvidence V1 — DONE.
-2. TrainingPattern / RunningSessionClassification V1.
-3. AI Goal Assessment V1 structuré et expliqué.
-4. Fréquence recommandée, confirmation et PlanConstraints.
-5. Onboarding V2 écrivant directement les contrats V1.
-6. Écran de compréhension.
-7. Contrat IA V2 pour la génération et prompt compact.
+2. TrainingPattern / RunningSessionClassification V1 — DONE.
+3. AI Goal Assessment V1 structuré et expliqué — DONE.
+4. Fréquence recommandée, confirmation et PlanConstraints — DONE.
+5. Onboarding V2 écrivant directement les contrats V1 — DONE.
+6. Écran de compréhension et orchestration du premier parcours — DONE V1.
+7. Contrat IA V2 pour la génération et prompt compact — PROCHAINE ÉTAPE.
 8. PlanProposal V2 et validation locale.
 9. Acceptation/publication Garmin V2.
 10. Dashboard minimal V2.

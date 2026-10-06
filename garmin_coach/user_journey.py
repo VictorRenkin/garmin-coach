@@ -5,6 +5,7 @@ from typing import Literal
 
 from .config import user_context
 from .garmin import stored_tokens_available
+from .first_run_journey import build_first_run_journey
 from .onboarding import load_onboarding
 from .user_accounts import list_user_records
 
@@ -13,6 +14,15 @@ UserJourneyStage = Literal[
     "verify_email",
     "onboarding",
     "connect_garmin",
+    "importing",
+    "import_failed",
+    "review_garmin",
+    "complete_declarations",
+    "review_understanding",
+    "goal_assessment",
+    "planning_recommendation",
+    "confirm_frequency",
+    "ready_for_plan",
     "dashboard",
 ]
 
@@ -41,6 +51,7 @@ def determine_user_stage(user_id: str) -> UserJourneyStage:
         status = str(onboarding.get("status") or "not_started")
         if status not in {
             "ready",
+            "ready_for_garmin",
             "waiting_existing_plan",
             "plan_proposed",
             "complete",
@@ -50,8 +61,19 @@ def determine_user_stage(user_id: str) -> UserJourneyStage:
             return "connect_garmin"
         setup = onboarding.get("garmin_setup")
         setup_status = str(setup.get("status") or "") if isinstance(setup, dict) else ""
-        if status == "ready":
-            if setup_status in {"analysis_ready", "plan_rejected"}:
-                return "dashboard"
-            return "connect_garmin"
-    return "dashboard"
+        if status in {"waiting_existing_plan", "plan_proposed", "complete"}:
+            return "dashboard"
+        if onboarding.get("onboarding_version") != 2:
+            return (
+                "dashboard"
+                if setup_status in {"analysis_ready", "plan_rejected"}
+                else "connect_garmin"
+            )
+        if setup_status == "plan_rejected":
+            return "dashboard"
+        journey_stage = build_first_run_journey(user_id).get("stage")
+        if journey_stage == "initial_intent":
+            return "onboarding"
+        if journey_stage in UserJourneyStage.__args__:
+            return journey_stage  # type: ignore[return-value]
+        return "onboarding"

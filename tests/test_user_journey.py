@@ -6,6 +6,8 @@ from pathlib import Path
 import pytest
 
 from garmin_coach import config, user_accounts
+from garmin_coach.goal import build_goal_v1
+from garmin_coach.runtime_context import update_motionest_inputs_v1
 from garmin_coach.user_journey import determine_user_stage
 
 
@@ -182,6 +184,28 @@ def test_analysis_ready_opens_dashboard(isolated_journey: Path) -> None:
     )
     _write_tokens(isolated_journey, "u_runner")
     assert determine_user_stage("u_runner") == "dashboard"
+
+
+def test_v2_analysis_ready_requires_post_import_review(
+    isolated_journey: Path,
+) -> None:
+    _write_accounts(isolated_journey, {"id": "u_runner", "email_verified": True})
+    update_motionest_inputs_v1("u_runner", goal=build_goal_v1("beginner"))
+    target = isolated_journey / "users" / "u_runner" / "onboarding.json"
+    target.write_text(
+        json.dumps(
+            {
+                "onboarding_version": 2,
+                "status": "ready_for_garmin",
+                "garmin_setup": {"status": "analysis_ready"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    _write_tokens(isolated_journey, "u_runner")
+
+    assert determine_user_stage("u_runner") == "review_garmin"
+    assert determine_user_stage("u_runner") == "review_garmin"
 
 
 def test_garmin_tokens_are_isolated_between_users(isolated_journey: Path) -> None:
