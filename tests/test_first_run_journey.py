@@ -147,7 +147,10 @@ def test_ready_for_plan_requires_current_decision(
         lambda *args: {
             "status": "available",
             "input_fingerprint": "a" * 64,
-            "recommendation": {"recommended_sessions_per_week": 3},
+            "recommendation": {
+                "status": "recommended",
+                "recommended_sessions_per_week": 3,
+            },
         },
     )
     monkeypatch.setattr(
@@ -178,6 +181,49 @@ def test_ready_for_plan_requires_current_decision(
     assert ready["planning_decision"]["decision"][
         "confirmed_sessions_per_week"
     ] == 2
+
+
+def test_insufficient_recommendation_never_requests_frequency_confirmation(
+    isolated_first_run: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user_id = "u_insufficient_frequency"
+    _goal(user_id)
+    _declarations(user_id)
+    _tokens(isolated_first_run, user_id)
+    _onboarding(isolated_first_run, user_id, "analysis_ready")
+    confirm_first_run_step(user_id, "observations")
+    confirm_first_run_step(user_id, "understanding")
+    monkeypatch.setattr(
+        first_run_journey,
+        "_safe_assessment_state",
+        lambda *args: {"status": "available", "assessment": {"assessment": "not_applicable"}},
+    )
+    monkeypatch.setattr(
+        first_run_journey,
+        "_safe_recommendation_state",
+        lambda *args: {
+            "status": "available",
+            "input_fingerprint": "b" * 64,
+            "recommendation": {
+                "status": "insufficient_context",
+                "recommended_sessions_per_week": None,
+                "summary": "Aucune fréquence responsable ne peut être recommandée.",
+                "explanation": "Une déclaration importante doit être clarifiée.",
+                "uncertainties": ["État actuel non disponible."],
+            },
+        },
+    )
+    monkeypatch.setattr(
+        first_run_journey,
+        "_safe_decision_state",
+        lambda *args: pytest.fail("Une décision ne doit pas être lue sans recommandation numérique."),
+    )
+
+    state = build_first_run_journey(user_id)
+
+    assert state["stage"] == "frequency_unavailable"
+    assert state["actions"] == ["edit_declarations"]
+    assert state["planning_recommendation"]["recommendation"]["status"] == "insufficient_context"
 
 
 @pytest.mark.parametrize("legacy_payload", [None, {"objective": {"title": "Objectif à définir"}}])

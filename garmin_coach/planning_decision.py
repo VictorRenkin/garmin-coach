@@ -49,7 +49,7 @@ from .runtime_context import RuntimeMotionestContextV1, build_runtime_motionest_
 
 
 SCHEMA_VERSION = 1
-PROMPT_VERSION = 1
+PROMPT_VERSION = 2
 MAX_SUPPORTING_FACTS = 12
 MAX_TEXT_ITEMS = 10
 MAX_SUMMARY_LENGTH = 240
@@ -70,8 +70,13 @@ La préférence utilisateur n'est pas une contrainte absolue ; explique brièvem
 La fréquence observée est une preuve, ni une cible imposée, ni un minimum, ni un maximum.
 GoalAssessment est une interprétation structurée, jamais une garantie de résultat.
 N'invente aucune donnée personnelle, Recovery, fatigue, douleur, blessure, activité ou performance.
-Ne diagnostique pas et n'encourage jamais l'entraînement malgré une douleur affectant l'entraînement.
-Si le contexte ne permet pas une recommandation responsable, retourne insufficient_context sans fréquence.
+Ne diagnostique pas. Une douleur ou blessure déclarée est une contrainte de coaching à prendre en compte,
+pas un motif automatique pour refuser toute recommandation. Lorsque les faits le permettent, recommande
+une fréquence adaptée et explique clairement les adaptations, les signaux d'arrêt et les limites.
+La description est une déclaration utilisateur, pas un diagnostic médical ni un fait mesuré.
+Retourne insufficient_context uniquement si une donnée indispensable manque, si les faits se contredisent,
+ou si la déclaration décrit une contre-indication explicite ou un risque médical qui empêche réellement
+de proposer une fréquence. L'insistance de l'utilisateur ne permet jamais d'ignorer un risque grave.
 Ne génère aucune séance, ne choisis aucun jour précis et ne construis aucun plan.
 Les supporting_facts doivent référencer exclusivement des paths présents dans facts.
 L'explication doit être concise et distinguer principes généraux et faits propres à l'utilisateur."""
@@ -83,7 +88,7 @@ class StrictContract(BaseModel):
 
 class PlanningRecommendationInputV1(StrictContract):
     schema_version: Literal[1] = SCHEMA_VERSION
-    prompt_version: Literal[1] = PROMPT_VERSION
+    prompt_version: Literal[2] = PROMPT_VERSION
     as_of: str
     facts: dict[str, Any]
     limitations: list[str]
@@ -107,7 +112,7 @@ def _normalized_text(value: str, *, maximum: int, field: str) -> str:
 
 class PlanningRecommendationV1(StrictContract):
     schema_version: Literal[1] = SCHEMA_VERSION
-    prompt_version: Literal[1] = PROMPT_VERSION
+    prompt_version: Literal[2] = PROMPT_VERSION
     status: RecommendationStatus
     recommended_sessions_per_week: int | None = Field(default=None, ge=1, le=7)
     confidence: Confidence
@@ -155,14 +160,12 @@ class PlanningRecommendationV1(StrictContract):
             raise ValueError("Une recommandation doit contenir une fréquence.")
         if self.status == "insufficient_context" and self.recommended_sessions_per_week is not None:
             raise ValueError("insufficient_context interdit une fréquence recommandée.")
-        if self.status == "insufficient_context" and self.confidence == "high":
-            raise ValueError("insufficient_context ne peut pas avoir une confiance élevée.")
         return self
 
 
 class PlanningRecommendationStoreV1(StrictContract):
     schema_version: Literal[1] = SCHEMA_VERSION
-    prompt_version: Literal[1] = PROMPT_VERSION
+    prompt_version: Literal[2] = PROMPT_VERSION
     prompt_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
     input_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
     recommendation: PlanningRecommendationV1
@@ -377,6 +380,7 @@ def build_planning_recommendation_input_v1(
         "safety.pain_status": safety.pain_status,
         "safety.pain_or_injury_affecting_training": safety.pain_or_injury_affecting_training,
         "safety.pain_description_present": safety.pain_description_present,
+        "safety.user_reported_pain_or_injury": runtime.context.subjective_context.pain_or_injury.description,
         "confidence.training_history": confidence.training_history,
         "confidence.current_state": confidence.current_state,
         "confidence.training_load": confidence.training_load,
@@ -665,6 +669,7 @@ def _decision_context_payload(runtime: RuntimeMotionestContextV1) -> dict[str, A
             "pain_status": safety.pain_status,
             "pain_or_injury_affecting_training": safety.pain_or_injury_affecting_training,
             "pain_description_present": safety.pain_description_present,
+            "user_reported_pain_or_injury": runtime.context.subjective_context.pain_or_injury.description,
         },
         "unrecorded_activities": _unrecorded_facts(runtime),
     }

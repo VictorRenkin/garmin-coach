@@ -88,6 +88,7 @@ def prepare_runtime(
     preferred: int | None = 3,
     activity_count: int = 12,
     pain: bool | None = False,
+    pain_description: str | None = None,
     unrecorded: list[dict[str, Any]] | None = None,
 ) -> runtime_context.RuntimeMotionestContextV1:
     days = available_days or ["tue", "thu", "sat"]
@@ -101,7 +102,7 @@ def prepare_runtime(
         ),
         subjective_context=build_subjective_context_v1(
             affecting_training=pain,
-            pain_description="Private pain description" if pain else None,
+            pain_description=(pain_description or "Private pain description") if pain else None,
             important_preferences=["Private free-form preference"],
             unrecorded_activities=unrecorded or [],
         ),
@@ -322,7 +323,7 @@ def test_race_requires_current_goal_assessment_and_passes_only_structured_fields
         assert "Texte libre précédent" not in serialized
 
 
-def test_pain_unrecorded_activities_and_privacy_are_structured_only() -> None:
+def test_pain_description_is_sent_to_coach_but_other_private_fields_stay_excluded() -> None:
     runtime = prepare_runtime(
         "private_planning",
         build_goal_v1("comeback"),
@@ -340,12 +341,12 @@ def test_pain_unrecorded_activities_and_privacy_are_structured_only() -> None:
 
     assert source.facts["safety.pain_status"] == "explicit_yes"
     assert source.facts["safety.pain_description_present"] is True
+    assert source.facts["safety.user_reported_pain_or_injury"] == "Private pain description"
     assert source.facts["unrecorded_activities.count"] == 1
     assert source.facts["unrecorded_activities.total_reported_sessions_per_week"] == 2
     assert source.facts["unrecorded_activities.total_typical_duration_minutes_per_week"] == 90
     assert source.facts["unrecorded_activities.provenance"] == "user_reported_unrecorded"
     for forbidden in (
-        "private",
         "user_id",
         "garmin",
         "activityid",
@@ -359,6 +360,24 @@ def test_pain_unrecorded_activities_and_privacy_are_structured_only() -> None:
         "strength_training",
     ):
         assert forbidden not in serialized
+    assert "private free-form preference" not in serialized
+
+
+def test_pain_description_changes_decision_context_fingerprint() -> None:
+    first = prepare_runtime(
+        "pain_fingerprint_first",
+        build_goal_v1("comeback"),
+        pain=True,
+        pain_description="Gêne légère au genou après la course.",
+    )
+    second = prepare_runtime(
+        "pain_fingerprint_second",
+        build_goal_v1("comeback"),
+        pain=True,
+        pain_description="Interdiction médicale temporaire de courir.",
+    )
+
+    assert decision_context_fingerprint(first) != decision_context_fingerprint(second)
 
 
 def test_missing_goal_or_availability_returns_explicit_dependency_error() -> None:
@@ -429,6 +448,13 @@ def test_insufficient_context_is_explicit_and_never_contains_frequency() -> None
     assert validate_planning_recommendation(value, source).recommended_sessions_per_week is None
     with pytest.raises(ValidationError):
         recommendation_for(source, sessions=2, status="insufficient_context")
+
+    explicit_contraindication = recommendation_for(
+        source, sessions=None, status="insufficient_context", confidence="high"
+    )
+    assert validate_planning_recommendation(
+        explicit_contraindication, source
+    ).confidence == "high"
 
 
 def test_insufficient_context_cannot_be_confirmed_or_create_decision(

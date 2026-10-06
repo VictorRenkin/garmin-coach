@@ -37,6 +37,7 @@ FirstRunStage = Literal[
     "review_understanding",
     "goal_assessment",
     "planning_recommendation",
+    "frequency_unavailable",
     "confirm_frequency",
     "ready_for_plan",
     "dashboard",
@@ -272,6 +273,24 @@ def build_first_run_journey(user_id: str) -> dict[str, Any]:
                 **base,
                 "stage": "planning_recommendation",
                 "actions": ["generate_planning_recommendation"],
+            }
+
+        recommendation_value = recommendation.get("recommendation")
+        recommended_sessions = (
+            recommendation_value.get("recommended_sessions_per_week")
+            if isinstance(recommendation_value, dict)
+            else None
+        )
+        if (
+            not isinstance(recommendation_value, dict)
+            or recommendation_value.get("status") != "recommended"
+            or isinstance(recommended_sessions, bool)
+            or not isinstance(recommended_sessions, int)
+        ):
+            return {
+                **base,
+                "stage": "frequency_unavailable",
+                "actions": ["edit_declarations"],
             }
 
         decision = _safe_decision_state(user_id, runtime)

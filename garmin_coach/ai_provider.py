@@ -64,7 +64,9 @@ def structured_completion(
 
     if settings.ai_provider == "openai" and not settings.ai_base_url:
         model = routed_openai_model(settings, quality)
-        client = OpenAI(api_key=settings.ai_api_key)
+        # Keep interactive coaching bounded: the SDK default can otherwise
+        # retry a slow request for several minutes while the dashboard waits.
+        client = OpenAI(api_key=settings.ai_api_key, timeout=60.0, max_retries=0)
         response = client.responses.parse(
             model=model,
             reasoning={"effort": reasoning_effort},

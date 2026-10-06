@@ -384,6 +384,33 @@ def test_unknown_supporting_fact_and_semantic_incompatibilities_are_rejected() -
         validate_goal_assessment(unsupported, source)
 
 
+def test_existing_nested_supporting_fact_is_canonicalized_to_compact_parent() -> None:
+    source = build_goal_assessment_input_v1(
+        prepare_runtime("nested_grounding", race_goal(), pain=True)
+    )
+    nested = assessment_for(
+        source,
+        path="motionest_context.integration.safety_context.pain_or_injury_affecting_training",
+    )
+
+    validated = validate_goal_assessment(nested, source)
+
+    assert validated.supporting_facts[0].path == (
+        "motionest_context.integration.safety_context"
+    )
+
+
+def test_performance_comparison_parent_is_available_as_a_grounding_fact() -> None:
+    source = build_goal_assessment_input_v1(
+        prepare_runtime("comparison_parent", race_goal())
+    )
+    candidate = assessment_for(
+        source, path="goal_evidence.performance_comparison"
+    )
+
+    assert validate_goal_assessment(candidate, source) == candidate
+
+
 def test_invalid_provider_response_is_explicit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

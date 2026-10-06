@@ -31,7 +31,7 @@ from .runtime_context import RuntimeMotionestContextV1, build_runtime_motionest_
 
 
 SCHEMA_VERSION = 1
-PROMPT_VERSION = 1
+PROMPT_VERSION = 2
 MAX_SUPPORTING_FACTS = 12
 MAX_TEXT_ITEMS = 10
 MAX_SUMMARY_LENGTH = 240
@@ -63,7 +63,10 @@ Une donnée faible, partielle ou stale doit réduire la confiance et apparaître
 Pour une course sans date, évalue uniquement l'écart actuel : ne conclus rien sur la faisabilité à une échéance.
 Une date de course absente doit apparaître comme incertitude ou réserve et interdit une confiance élevée artificielle.
 very_ambitious ne signifie jamais impossible. Ne promets aucun résultat sportif.
-Les supporting_facts doivent référencer exclusivement un path présent dans facts.
+Les supporting_facts doivent référencer exclusivement un path exact présent dans facts.
+Si la valeur d'un fait est un objet, cite son path parent exact sans ajouter le nom d'un sous-champ.
+Si tu mentionnes un temps cible, convertis fidèlement goal_evidence.race.target_time_seconds ;
+en cas de doute, ne reformule pas ce temps dans le texte.
 L'explication doit être courte, utile et distinguer absence de preuve et preuve d'absence."""
 
 
@@ -73,7 +76,7 @@ class StrictContract(BaseModel):
 
 class GoalAssessmentInputV1(StrictContract):
     schema_version: Literal[1] = SCHEMA_VERSION
-    prompt_version: Literal[1] = PROMPT_VERSION
+    prompt_version: Literal[2] = PROMPT_VERSION
     as_of: str
     assessment_scope: AssessmentScope
     goal_intent: Literal["progress", "race", "beginner", "comeback"]
@@ -99,7 +102,7 @@ def _normalized_text(value: str, *, maximum: int, field: str) -> str:
 
 class GoalAssessmentV1(StrictContract):
     schema_version: Literal[1] = SCHEMA_VERSION
-    prompt_version: Literal[1] = PROMPT_VERSION
+    prompt_version: Literal[2] = PROMPT_VERSION
     assessment_scope: AssessmentScope
     assessment: Assessment
     confidence: AssessmentConfidence
@@ -137,7 +140,7 @@ class GoalAssessmentV1(StrictContract):
 
 class GoalAssessmentStoreV1(StrictContract):
     schema_version: Literal[1] = SCHEMA_VERSION
-    prompt_version: Literal[1] = PROMPT_VERSION
+    prompt_version: Literal[2] = PROMPT_VERSION
     prompt_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
     input_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
     assessment: GoalAssessmentV1
@@ -273,6 +276,7 @@ def _fact_map(runtime: RuntimeMotionestContextV1) -> dict[str, Any]:
             "goal_evidence.race.days_to_event": evidence.race.days_to_event,
             "goal_evidence.race.target_time_seconds": evidence.race.target_time_seconds,
             "goal_evidence.race.target_pace_seconds_per_km": evidence.race.target_pace_seconds_per_km,
+            "goal_evidence.performance_comparison": evidence.performance_comparison.model_dump(mode="json"),
             "goal_evidence.performance_comparison.status": evidence.performance_comparison.status,
             "goal_evidence.performance_comparison.reference": (
                 evidence.performance_comparison.reference.model_dump(mode="json")
@@ -351,9 +355,51 @@ def goal_assessment_fingerprint(
     return hashlib.sha256(canonical).hexdigest()
 
 
+def _canonicalize_supporting_facts(
+    value: GoalAssessmentV1, facts: dict[str, Any]
+) -> GoalAssessmentV1:
+    """Collapse a valid nested citation to its authoritative fact-map key.
+
+    The AI occasionally cites ``parent.child`` when ``facts`` deliberately
+    exposes ``parent`` as one compact object. Only an existing nested value may
+    be collapsed; an invented path remains invalid and is rejected below.
+    """
+    normalized: list[SupportingFact] = []
+    seen: set[str] = set()
+    for supporting in value.supporting_facts:
+        path = supporting.path
+        if path not in facts:
+            parents = sorted(
+                (
+                    key
+                    for key, fact in facts.items()
+                    if isinstance(fact, dict) and path.startswith(f"{key}.")
+                ),
+                key=len,
+                reverse=True,
+            )
+            for parent in parents:
+                nested: Any = facts[parent]
+                for part in path[len(parent) + 1 :].split("."):
+                    if not isinstance(nested, dict) or part not in nested:
+                        break
+                    nested = nested[part]
+                else:
+                    path = parent
+                    break
+        if path in seen:
+            continue
+        seen.add(path)
+        normalized.append(SupportingFact(path=path, role=supporting.role))
+    if normalized == value.supporting_facts:
+        return value
+    return value.model_copy(update={"supporting_facts": normalized})
+
+
 def validate_goal_assessment(
     value: GoalAssessmentV1, source: GoalAssessmentInputV1
 ) -> GoalAssessmentV1:
+    value = _canonicalize_supporting_facts(value, source.facts)
     if value.assessment_scope != source.assessment_scope:
         raise GoalAssessmentError(
             "assessment_scope_mismatch", "Le scope retourné ne correspond pas aux faits."

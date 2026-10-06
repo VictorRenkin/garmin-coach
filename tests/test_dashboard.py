@@ -447,6 +447,12 @@ def test_dashboard_opens_existing_onboarding_for_a_new_motionest_account() -> No
     assert "review_garmin" in html
     assert "review_understanding" in html
     assert "ready_for_plan" in html
+    assert "frequency_unavailable" in html
+    assert "Recommandation suspendue" in html
+    assert "indisponible séance(s)" not in html
+    assert "La réponse du coach" in html
+    assert "recommendation.explanation" in html
+    assert "Le coach analyse tes données" in html
 
 
 def test_chat_http_endpoint_queues_ai_response(tmp_path, monkeypatch) -> None:
