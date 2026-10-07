@@ -399,6 +399,110 @@ def test_unknown_supporting_fact_and_semantic_incompatibilities_are_rejected() -
         validate_goal_assessment(unsupported, source)
 
 
+def test_rejected_ai_candidate_is_preserved_with_validation_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user_id = "rejected_attempt_trace"
+    runtime = prepare_runtime(user_id, race_goal())
+    source = build_goal_assessment_input_v1(runtime)
+    candidate = assessment_for(source, path="garmin.raw.imaginary_fact")
+    monkeypatch.setattr(
+        ai_provider,
+        "structured_completion",
+        lambda *args, **kwargs: candidate,
+    )
+
+    with pytest.raises(GoalAssessmentError) as rejected:
+        generate_goal_assessment(user_id, runtime=runtime, settings=settings())
+
+    assert rejected.value.code == "unknown_supporting_fact"
+    traces = list(
+        (tmp_path / "users" / user_id / "ai_diagnostics" / "goal_assessment").glob(
+            "*.json"
+        )
+    )
+    assert len(traces) == 1
+    trace = json.loads(traces[0].read_text(encoding="utf-8"))
+    assert trace["status"] == "rejected"
+    assert trace["candidate_before_validation"] == candidate.model_dump(mode="json")
+    assert trace["cited_supporting_fact_paths"] == ["garmin.raw.imaginary_fact"]
+    assert trace["unknown_supporting_fact_paths"] == ["garmin.raw.imaginary_fact"]
+    assert trace["validation"] == {
+        "accepted": False,
+        "code": "unknown_supporting_fact",
+        "message": "La réponse référence un fait absent du payload autorisé.",
+    }
+    serialized = json.dumps(trace, ensure_ascii=False)
+    assert "test-key" not in serialized
+    assert "Private pain description" not in serialized
+    assert "Private preference" not in serialized
+
+
+def test_accepted_ai_candidate_is_preserved_after_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user_id = "accepted_attempt_trace"
+    runtime = prepare_runtime(user_id, race_goal())
+    source = build_goal_assessment_input_v1(runtime)
+    candidate = assessment_for(source)
+    monkeypatch.setattr(
+        ai_provider,
+        "structured_completion",
+        lambda *args, **kwargs: candidate,
+    )
+
+    state = generate_goal_assessment(user_id, runtime=runtime, settings=settings())
+
+    assert state.status == "available"
+    traces = list(
+        (tmp_path / "users" / user_id / "ai_diagnostics" / "goal_assessment").glob(
+            "*.json"
+        )
+    )
+    assert len(traces) == 1
+    trace = json.loads(traces[0].read_text(encoding="utf-8"))
+    assert trace["status"] == "accepted"
+    assert trace["candidate_before_validation"] == candidate.model_dump(mode="json")
+    assert trace["candidate_after_safe_canonicalization"] == candidate.model_dump(
+        mode="json"
+    )
+    assert trace["unknown_supporting_fact_paths"] == []
+    assert trace["validation"]["accepted"] is True
+    assert trace["validation"]["code"] == "accepted"
+
+
+def test_provider_failure_is_traced_without_recording_exception_or_secret(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user_id = "provider_error_attempt_trace"
+    runtime = prepare_runtime(user_id, race_goal())
+    monkeypatch.setattr(
+        ai_provider,
+        "structured_completion",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            RuntimeError("provider failed with secret-value")
+        ),
+    )
+
+    with pytest.raises(GoalAssessmentError) as failed:
+        generate_goal_assessment(user_id, runtime=runtime, settings=settings())
+
+    assert failed.value.code == "provider_unavailable"
+    traces = list(
+        (tmp_path / "users" / user_id / "ai_diagnostics" / "goal_assessment").glob(
+            "*.json"
+        )
+    )
+    assert len(traces) == 1
+    trace = json.loads(traces[0].read_text(encoding="utf-8"))
+    assert trace["status"] == "provider_error"
+    assert trace["candidate_before_validation"] is None
+    assert trace["validation"]["code"] == "provider_unavailable"
+    serialized = json.dumps(trace, ensure_ascii=False)
+    assert "secret-value" not in serialized
+    assert "test-key" not in serialized
+
+
 def test_existing_nested_supporting_fact_is_canonicalized_to_compact_parent() -> None:
     source = build_goal_assessment_input_v1(
         prepare_runtime("nested_grounding", race_goal(), pain=True)

@@ -22,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from . import ai_provider
 from .athlete_memory import decision_memory_context
 from .config import (
+    DATA_DIR,
     GOAL_ASSESSMENT_FILE,
     Settings,
     ensure_directories,
@@ -500,6 +501,29 @@ def _atomic_write_store(store: GoalAssessmentStoreV1) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def _write_ai_attempt(attempt_id: str, payload: dict[str, Any]) -> Path:
+    """Persist a local, user-isolated trace before business validation.
+
+    The trace contains only the controlled GoalAssessment payload and provider
+    candidate. API keys, Garmin tokens, cookies and raw activity files never
+    enter this diagnostic record.
+    """
+    directory = Path(os.fspath(DATA_DIR / "ai_diagnostics" / "goal_assessment"))
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / f"{attempt_id}.json"
+    # Keep the temporary name short enough for Windows test workspaces, whose
+    # pytest prefix can otherwise bring an atomic-write path above MAX_PATH.
+    temporary = directory / f".{uuid.uuid4().hex[:8]}.tmp"
+    encoded = json.dumps(payload, ensure_ascii=False, indent=2)
+    try:
+        temporary.write_text(encoded, encoding="utf-8")
+        json.loads(temporary.read_text(encoding="utf-8"))
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return target
+
+
 def _current_state(source: GoalAssessmentInputV1) -> GoalAssessmentStateV1:
     fingerprint = goal_assessment_fingerprint(source)
     store, diagnostics = _read_store()
@@ -596,6 +620,32 @@ def generate_goal_assessment(
                 model_name = ai_provider.routed_openai_model(
                     resolved_settings, "balanced"
                 )
+                attempt_id = (
+                    datetime.now().astimezone().strftime("%Y%m%dT%H%M%S%f")[:-3]
+                    + f"_{uuid.uuid4().hex[:6]}"
+                )
+                attempt: dict[str, Any] = {
+                    "schema_version": 1,
+                    "attempt_id": attempt_id,
+                    "captured_at": datetime.now()
+                    .astimezone()
+                    .isoformat(timespec="seconds"),
+                    "category": "goal_assessment",
+                    "provider": provider_name,
+                    "model": model_name,
+                    "prompt_version": PROMPT_VERSION,
+                    "prompt_digest": prompt_digest,
+                    "input_fingerprint": fingerprint,
+                    "input_payload": source.model_dump(mode="json"),
+                    "allowed_supporting_fact_paths": sorted(source.facts),
+                    "status": "requested",
+                    "candidate_before_validation": None,
+                    "candidate_after_safe_canonicalization": None,
+                    "cited_supporting_fact_paths": [],
+                    "unknown_supporting_fact_paths": [],
+                    "validation": None,
+                }
+                _write_ai_attempt(attempt_id, attempt)
                 try:
                     candidate = ai_provider.structured_completion(
                         resolved_settings,
@@ -607,19 +657,89 @@ def generate_goal_assessment(
                         max_output_tokens=1_000,
                         quality="balanced",
                     )
-                except GoalAssessmentError:
+                except GoalAssessmentError as exc:
+                    attempt.update(
+                        {
+                            "status": "provider_error",
+                            "validation": {
+                                "accepted": False,
+                                "code": exc.code,
+                                "message": str(exc),
+                            },
+                        }
+                    )
+                    _write_ai_attempt(attempt_id, attempt)
                     raise
                 except Exception as exc:
                     if _is_invalid_provider_response(exc):
-                        raise GoalAssessmentError(
+                        provider_error = GoalAssessmentError(
                             "invalid_provider_response",
                             "La réponse structurée de l'IA est invalide.",
-                        ) from exc
-                    raise GoalAssessmentError(
-                        _provider_failure_code(exc),
-                        "Le fournisseur d'IA est indisponible.",
-                    ) from exc
-                assessment = validate_goal_assessment(candidate, source)
+                        )
+                    else:
+                        provider_error = GoalAssessmentError(
+                            _provider_failure_code(exc),
+                            "Le fournisseur d'IA est indisponible.",
+                        )
+                    attempt.update(
+                        {
+                            "status": "provider_error",
+                            "validation": {
+                                "accepted": False,
+                                "code": provider_error.code,
+                                "message": str(provider_error),
+                            },
+                        }
+                    )
+                    _write_ai_attempt(attempt_id, attempt)
+                    raise provider_error from exc
+
+                canonical_candidate = _canonicalize_supporting_facts(
+                    candidate, source.facts
+                )
+                cited_paths = [
+                    item.path for item in canonical_candidate.supporting_facts
+                ]
+                attempt.update(
+                    {
+                        "status": "received",
+                        "candidate_before_validation": candidate.model_dump(mode="json"),
+                        "candidate_after_safe_canonicalization": (
+                            canonical_candidate.model_dump(mode="json")
+                        ),
+                        "cited_supporting_fact_paths": cited_paths,
+                        "unknown_supporting_fact_paths": sorted(
+                            set(cited_paths) - set(source.facts)
+                        ),
+                    }
+                )
+                _write_ai_attempt(attempt_id, attempt)
+                try:
+                    assessment = validate_goal_assessment(candidate, source)
+                except GoalAssessmentError as exc:
+                    attempt.update(
+                        {
+                            "status": "rejected",
+                            "validation": {
+                                "accepted": False,
+                                "code": exc.code,
+                                "message": str(exc),
+                            },
+                        }
+                    )
+                    _write_ai_attempt(attempt_id, attempt)
+                    raise
+                attempt.update(
+                    {
+                        "status": "accepted",
+                        "validation": {
+                            "accepted": True,
+                            "code": "accepted",
+                            "message": "La réponse respecte le contrat GoalAssessment V1.",
+                        },
+                    }
+                )
+                _write_ai_attempt(attempt_id, attempt)
                 generation_source = "ai"
 
             store = GoalAssessmentStoreV1(
