@@ -455,6 +455,16 @@ def test_dashboard_opens_existing_onboarding_for_a_new_motionest_account() -> No
     assert "Le coach analyse tes données" in html
 
 
+def test_dashboard_exposes_non_blocking_thinking_and_retry_states() -> None:
+    html = dashboard.TEMPLATE_FILE.read_text(encoding="utf-8")
+
+    assert "Le coach réfléchit…" in html
+    assert "L’analyse prend un peu plus de temps que d’habitude…" in html
+    assert 'data-coach-retry="${esc(m.id)}"' in html
+    assert "fetch('/api/coach/retry'" in html
+    assert "retryCoachMessage" in html
+
+
 def test_chat_http_endpoint_queues_ai_response(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(coach_chat, "MESSAGES_FILE", tmp_path / "messages.json")
     monkeypatch.setattr(coach_chat, "COACH_DRAFTS_DIR", tmp_path / "drafts")
@@ -489,6 +499,42 @@ def test_chat_http_endpoint_queues_ai_response(tmp_path, monkeypatch) -> None:
             payload = json.loads(response.read())
         assert payload["request"]["status"] == "pending"
         assert queued == [("u_test_chat", payload["request"]["id"])]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_chat_retry_endpoint_requeues_same_failed_message(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(coach_chat, "MESSAGES_FILE", tmp_path / "messages.json")
+    monkeypatch.setattr(coach_chat, "COACH_DRAFTS_DIR", tmp_path / "drafts")
+    monkeypatch.setattr(coach_chat, "ensure_directories", lambda: None)
+    request_message = coach_chat.submit_message("Message à reprendre")
+    coach_chat.mark_request_failed(request_message["id"])
+    queued = []
+    monkeypatch.setattr(
+        dashboard,
+        "queue_coach_response",
+        lambda user_id, request_id: queued.append((user_id, request_id)),
+    )
+    server = dashboard.ThreadingHTTPServer(("127.0.0.1", 0), dashboard.DashboardHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        cookie = f"motionest_session={user_accounts.create_session('u_test_retry')}"
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{server.server_port}/api/coach/retry",
+            data=json.dumps({"requestId": request_message["id"]}).encode(),
+            headers={"Content-Type": "application/json", "Cookie": cookie},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=3) as response:
+            assert response.status == 202
+            payload = json.loads(response.read())
+        assert payload["request"]["id"] == request_message["id"]
+        assert payload["request"]["status"] == "pending"
+        assert queued == [("u_test_retry", request_message["id"])]
+        assert len(coach_chat.list_messages()) == 1
     finally:
         server.shutdown()
         server.server_close()

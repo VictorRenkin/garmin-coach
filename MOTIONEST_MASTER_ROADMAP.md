@@ -26,6 +26,8 @@ Principes non négociables :
 - isoler les comptes, espaces locaux, tokens et tâches par utilisateur;
 - aucune publication Garmin avant acceptation explicite du plan par l'utilisateur;
 - une absence de données sportives limite une conclusion sportive, mais ne rend pas automatiquement un contrat technique inutilisable.
+- les contrats Motionest structurent les faits et les décisions; le Coach IA conserve la responsabilité de l'échange, de la clarification et de l'explication;
+- une déclaration comprise pendant la conversation n'applique jamais silencieusement un objectif, une disponibilité, une fréquence, un plan ou une publication : ces changements restent soumis à une confirmation structurée.
 
 ## 2. État réel du dépôt au commit de référence
 
@@ -715,6 +717,22 @@ L'utilisateur comprend ce qui est connu, inconnu ou déclaré et peut corriger s
 **NE PAS FAIRE À CETTE ÉTAPE**
 
 Afficher des identifiants techniques, coordonnées GPS ou verdict sans explication.
+
+### Coach conversationnel et mémoire structurée V2
+
+**STATUS : DONE V2 pour le chat actuel**
+
+Le Coach peut répondre, demander une seule précision utile ou préparer une action à confirmer. Sa réponse structurée transporte dans le même appel les mises à jour de mémoire explicitement ancrées dans le dernier message utilisateur; aucun second appel IA n'est lancé pour extraire ces faits.
+
+`coach_memory.json` accepte toujours l'ancien tableau de faits textuels en lecture et persiste désormais un store versionné distinguant mémoire `durable`, signal `current` et `event`. Les opérations `add`, `upsert`, `resolve` et `supersede` empêchent de présenter deux déclarations corrigées comme simultanément actives. Le backend rejette les extrapolations non ancrées, diagnostics et secrets. Une contre-indication explicite reste un garde-fou dur; une gêne ambiguë reste un sujet de clarification conversationnelle.
+
+Chaque appel reçoit au maximum huit messages récents et une projection déterministe de douze mémoires actives au plus, bornée à 1 800 caractères. Les décisions GoalAssessment et PlanningRecommendation ne reçoivent qu'un sous-ensemble déclaré contrôlé. Une mémoire de conversation ne remplace jamais directement les contrats canoniques ni une valeur confirmée.
+
+Le dashboard affiche immédiatement le message utilisateur, un état de réflexion non bloquant, un message factuel au-delà de dix secondes et un bouton de reprise sur échec. La télémétrie enregistre, lorsqu'ils sont fournis par le modèle, les tokens d'entrée, tokens d'entrée en cache, tokens de sortie, total, modèle routé, durée, taille de payload et statut de cache.
+
+**LIMITES RESTANTES**
+
+La sélection est volontairement déterministe, sans recherche vectorielle. Les signaux courants expirés sont exclus du contexte mais ne sont pas supprimés du store. La promotion d'une déclaration conversationnelle vers Goal, Availability ou SubjectiveContext demeure une future action explicite et confirmée. RecoveryState complet et diagnostic médical restent hors périmètre.
 
 ### Phase 10 — Contrat IA V2 et prompt
 

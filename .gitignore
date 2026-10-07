@@ -30,4 +30,5 @@ backups/
 # Outils et copies locales
 .vscode/
 .idea/
+.playwright-cli/
 garmin-coach-github/

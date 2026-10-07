@@ -31,7 +31,7 @@ from .account_security import (
 )
 from .ai_analysis import analyze_and_save, load_analysis
 from .activity_data import latest_hr_zone_boundaries, public_detail
-from .athlete_memory import activity_trace, load_memory
+from .athlete_memory import activity_trace, select_relevant_memory
 from .coach_chat import (
     add_assistant_prompt,
     claim_action,
@@ -42,6 +42,7 @@ from .coach_chat import (
     mark_action_rejected,
     mark_request_failed,
     release_action_claim,
+    retry_request,
     store_response,
     submit_message,
 )
@@ -500,23 +501,12 @@ def queue_coach_response(user_id: str, request_id: str) -> None:
             request = get_message(request_id)
             if not request or request.get("status") != "pending":
                 return
-            retry_delays = (0.0, 2.5, 6.0)
-            for attempt, delay in enumerate(retry_delays, start=1):
-                if delay:
-                    threading.Event().wait(delay)
-                try:
-                    response = generate_response(request, load_settings(), coach_context())
-                    store_response(request_id, response)
-                    return
-                except Exception:
-                    if attempt < len(retry_delays):
-                        LOGGER.warning(
-                            "RÃ©ponse du coach interrompue, nouvelle tentative %s/%s",
-                            attempt + 1,
-                            len(retry_delays),
-                        )
-                    else:
-                        LOGGER.exception("RÃ©ponse du coach impossible aprÃ¨s plusieurs tentatives")
+            try:
+                response = generate_response(request, load_settings(), coach_context())
+                store_response(request_id, response)
+                return
+            except Exception:
+                LOGGER.exception("Réponse du coach impossible")
             mark_request_failed(request_id)
 
     threading.Thread(
@@ -528,6 +518,7 @@ def queue_coach_response(user_id: str, request_id: str) -> None:
 
 def coach_context() -> dict[str, Any]:
     """Contexte sportif utile, sans identité ni coordonnées GPS."""
+    all_messages = list_messages()
     conversation = [
         {
             "role": item.get("role"),
@@ -535,9 +526,16 @@ def coach_context() -> dict[str, Any]:
             "action": item.get("action"),
             "action_status": item.get("action_status"),
         }
-        for item in list_messages()[-12:]
+        for item in all_messages[-8:]
         if item.get("role") in {"user", "assistant"}
     ]
+    latest_user_text = next(
+        (
+            str(item.get("content") or "") for item in reversed(all_messages)
+            if item.get("role") == "user"
+        ),
+        "",
+    )
     all_activities = load_public_activities()
     activities = all_activities[-5:]
     raw_plan = load_relevant_plan()
@@ -601,7 +599,7 @@ def coach_context() -> dict[str, Any]:
             for activity in activities
         ],
         "trace_sportive": activity_trace(all_activities),
-        "memoire_coureur": load_memory(),
+        "memoire_pertinente": select_relevant_memory(latest_user_text),
         "conversation_recente": conversation,
         "onboarding": load_onboarding(),
     }
@@ -2052,6 +2050,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     "message": "Le coach prépare sa réponse.",
                     "request": message,
                 },
+                status=202,
+            )
+            return
+        if path == "/api/coach/retry":
+            try:
+                content_length = int(self.headers.get("Content-Length", "0"))
+                body = json.loads(self.rfile.read(content_length) or b"{}")
+                request = retry_request(str(body.get("requestId") or ""))
+            except (ValueError, TypeError, json.JSONDecodeError) as exc:
+                _json_response(self, {"ok": False, "message": str(exc)}, status=400)
+                return
+            queue_coach_response(current_user_id(), str(request["id"]))
+            _json_response(
+                self,
+                {"ok": True, "message": "Le coach réessaie.", "request": request},
                 status=202,
             )
             return

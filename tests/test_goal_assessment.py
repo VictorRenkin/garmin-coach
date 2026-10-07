@@ -178,6 +178,21 @@ def test_compact_input_is_grounded_private_and_excludes_free_text() -> None:
     assert runtime.model_dump(mode="json") == before
 
 
+def test_goal_assessment_receives_only_controlled_conversation_context(monkeypatch) -> None:
+    runtime = prepare_runtime("conversation_goal", race_goal())
+    declared = [{
+        "category": "current_signal",
+        "key": "knee_discomfort_improving",
+        "text": "Gêne déclarée en amélioration.",
+        "scope": "current",
+    }]
+    monkeypatch.setattr(assessment_module, "decision_memory_context", lambda decision: declared)
+
+    source = build_goal_assessment_input_v1(runtime)
+
+    assert source.facts["conversation.active_declared_context"] == declared
+
+
 @pytest.mark.parametrize("intent", ["progress", "beginner", "comeback"])
 def test_non_race_is_not_applicable_without_provider_call(
     intent: str, monkeypatch: pytest.MonkeyPatch

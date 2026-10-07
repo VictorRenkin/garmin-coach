@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from typing import Any, Literal, TypeVar
 
 from openai import OpenAI
@@ -57,6 +58,8 @@ def structured_completion(
     category: str = "coach",
     max_output_tokens: int = 700,
     quality: Literal["economy", "balanced", "deep"] = "deep",
+    timeout_seconds: float | None = None,
+    max_retries: int | None = None,
 ) -> StructuredModel:
     """Appelle OpenAI Responses ou toute API compatible Chat Completions."""
     if not settings.ai_api_key:
@@ -66,16 +69,29 @@ def structured_completion(
         model = routed_openai_model(settings, quality)
         # Keep interactive coaching bounded: the SDK default can otherwise
         # retry a slow request for several minutes while the dashboard waits.
-        client = OpenAI(api_key=settings.ai_api_key, timeout=60.0, max_retries=0)
+        encoded_payload = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        client = OpenAI(
+            api_key=settings.ai_api_key,
+            timeout=timeout_seconds if timeout_seconds is not None else 60.0,
+            max_retries=max_retries if max_retries is not None else 0,
+        )
+        started = time.perf_counter()
         response = client.responses.parse(
             model=model,
             reasoning={"effort": reasoning_effort},
             instructions=instructions,
-            input=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+            input=encoded_payload,
             text_format=result_type,
             max_output_tokens=max(64, max_output_tokens),
         )
-        record_usage(response, category, model)
+        record_usage(
+            response,
+            category,
+            model,
+            duration_seconds=round(time.perf_counter() - started, 6),
+            payload_bytes=len(encoded_payload.encode("utf-8")),
+            cache_status="miss",
+        )
         if response.output_parsed is None:
             raise RuntimeError("L'IA n'a pas produit de réponse structurée.")
         return response.output_parsed
@@ -83,11 +99,12 @@ def structured_completion(
     client = OpenAI(
         api_key=settings.ai_api_key,
         base_url=settings.ai_base_url,
-        timeout=300.0,
-        max_retries=1,
+        timeout=timeout_seconds if timeout_seconds is not None else 300.0,
+        max_retries=max_retries if max_retries is not None else 1,
     )
     schema = json.dumps(result_type.model_json_schema(), ensure_ascii=False)
     user_content = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    started = time.perf_counter()
     completion = client.chat.completions.create(
         model=settings.ai_model,
         messages=[
@@ -102,6 +119,13 @@ def structured_completion(
         temperature=0.3,
         max_tokens=1800,
     )
-    record_usage(completion, category, settings.ai_model)
+    record_usage(
+        completion,
+        category,
+        settings.ai_model,
+        duration_seconds=round(time.perf_counter() - started, 6),
+        payload_bytes=len(user_content.encode("utf-8")),
+        cache_status="miss",
+    )
     content = completion.choices[0].message.content or ""
     return result_type.model_validate(_json_from_text(content))

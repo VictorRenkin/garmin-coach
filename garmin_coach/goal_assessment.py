@@ -20,6 +20,7 @@ from typing import Any, Iterator, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from . import ai_provider
+from .athlete_memory import decision_memory_context
 from .config import (
     GOAL_ASSESSMENT_FILE,
     Settings,
@@ -261,6 +262,9 @@ def _fact_map(runtime: RuntimeMotionestContextV1) -> dict[str, Any]:
         ],
         "training_pattern.confidence": pattern.confidence.model_dump(mode="json"),
         "training_pattern.limitations": pattern.limitations,
+        "conversation.active_declared_context": decision_memory_context(
+            "goal_assessment"
+        ),
     }
     if evidence is None:
         return facts

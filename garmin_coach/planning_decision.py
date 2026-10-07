@@ -28,6 +28,7 @@ from pydantic import (
 )
 
 from . import ai_provider
+from .athlete_memory import decision_memory_context
 from .availability import Day
 from .config import (
     PLANNING_DECISION_FILE,
@@ -385,6 +386,9 @@ def build_planning_recommendation_input_v1(
         "confidence.current_state": confidence.current_state,
         "confidence.training_load": confidence.training_load,
         "confidence.recovery": confidence.recovery,
+        "conversation.active_declared_context": decision_memory_context(
+            "planning_recommendation"
+        ),
         **_unrecorded_facts(runtime),
         **_goal_assessment_facts(user_id, runtime, goal_assessment_state),
     }
@@ -429,6 +433,17 @@ def validate_planning_recommendation(
 ) -> PlanningRecommendationV1:
     available = source.facts["availability.available_day_count"]
     recommended = value.recommended_sessions_per_week
+    declared_context = source.facts.get("conversation.active_declared_context", [])
+    hard_constraint = any(
+        isinstance(item, dict)
+        and item.get("key") in {"medical_no_running", "medical_no_training"}
+        for item in declared_context
+    )
+    if hard_constraint and recommended is not None:
+        raise PlanningDecisionError(
+            "active_hard_constraint",
+            "Une contre-indication déclarée active interdit une fréquence de course.",
+        )
     if recommended is not None and recommended > available:
         raise PlanningDecisionError(
             "recommendation_outside_availability",

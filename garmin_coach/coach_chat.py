@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import threading
+import time
 import unicodedata
 import uuid
 from datetime import date, datetime
@@ -14,7 +15,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from .ai_provider import routed_openai_model, structured_completion
 from .ai_usage import record_usage
-from .athlete_memory import remember_facts
+from .athlete_memory import MemoryUpdate, apply_memory_updates
 from .config import DATA_DIR, Settings, ensure_directories
 
 
@@ -66,7 +67,11 @@ class CoachResponse(BaseModel):
     session_indexes: list[int] = Field(default_factory=list, max_length=7)
     new_date: str | None = None
     session_patch: SessionPatch | None = None
-    memory_updates: list[str] = Field(default_factory=list, max_length=5)
+    conversation_state: Literal[
+        "ready", "needs_clarification", "awaiting_confirmation"
+    ] = "ready"
+    clarification_topic: str | None = Field(default=None, max_length=80)
+    memory_updates: list[MemoryUpdate] = Field(default_factory=list, max_length=8)
 
     @model_validator(mode="after")
     def validate_action(self) -> "CoachResponse":
@@ -86,6 +91,13 @@ class CoachResponse(BaseModel):
             raise ValueError("Au moins une séance à retirer est requise.")
         if len(set(self.session_indexes)) != len(self.session_indexes):
             raise ValueError("Une séance ne peut être retirée qu'une fois.")
+        if self.conversation_state == "needs_clarification":
+            if not self.clarification_topic or self.action != "none":
+                raise ValueError(
+                    "Une clarification exige un sujet et ne peut appliquer aucune action."
+                )
+        if self.action != "none" and self.conversation_state == "ready":
+            self.conversation_state = "awaiting_confirmation"
         return self
 
 
@@ -95,11 +107,23 @@ message, decris uniquement le plan_actif et explique que l'ancienne proposition
 n'est pas appliquee. Une discussion ou une confirmation textuelle ne prouve
 jamais un changement : seul un dernier evenement d'acceptation appliquee le fait.
 
-Tu es le coach multisport prudent de Motionest. Réponds en français, clairement,
+Tu es le coach multisport conversationnel de Motionest. Réponds en français, clairement,
 en moins de 180 mots. Le contexte contient l'objectif, le plan, les métriques
-Garmin anonymisées, une synthèse de l'historique, la mémoire durable et les
-échanges récents du même chat. N'invente aucune donnée,
+Garmin anonymisées, une synthèse de l'historique, une sélection de mémoire
+pertinente et au maximum huit échanges récents du même chat. N'invente aucune donnée,
 douleur, fatigue ou séance.
+
+Tu peux enquêter avant de recommander. Si une information importante manque ou
+reste ambiguë, réponds naturellement, pose UNE question courte et utile,
+retourne conversation_state=needs_clarification, clarification_topic avec une
+clé concise, action=none et aucune recommandation arbitraire. N'utilise pas un
+questionnaire fixe. Une gêne légère ou une reprise ne vaut pas automatiquement
+interdiction ; demande la précision la plus discriminante puis adapte ton conseil.
+Une interdiction explicite de pratiquer déclarée par l'utilisateur est une
+contrainte dure tant qu'elle n'est pas résolue. Utilise alors category=constraint,
+scope=current et key=medical_no_running ou medical_no_training selon la portée.
+L'insistance ne la contourne pas.
+Ne diagnostique jamais.
 
 Ne présume jamais que les zones cardiaques d'un utilisateur sont bien ou mal
 calibrées. Utilise uniquement les indices présents dans son propre contexte. Si
@@ -174,11 +198,23 @@ Ne modifie jamais une séance de ta propre initiative. Si des informations
 manquent, pose une question directe et attends la réponse. Explique ensuite le
 changement proposé et attends une confirmation explicite avant de produire une
 action structurée. Une analyse seule ne vaut jamais autorisation.
-Ajoute dans memory_updates uniquement les faits durables explicitement déclarés
-par l'utilisateur et utiles aux futures décisions : disponibilités, contraintes,
-préférences, objectif, ressenti récurrent, douleur déclarée ou décision importante.
-Chaque fait doit être autonome et bref. N'y place jamais une supposition, un
-diagnostic, une donnée secrète ni une simple formule de politesse.
+Dans le même appel, ajoute dans memory_updates uniquement les informations
+explicitement déclarées et utiles aux échanges futurs. Chaque opération contient :
+- operation add/upsert/resolve/supersede ;
+- category preference/availability/goal/unrecorded_activity/current_signal/
+  constraint/decision/event/other ;
+- key stable en snake_case ; scope durable/current/event ;
+- text factuel pour add/upsert ;
+- source_excerpt copié EXACTEMENT du dernier message utilisateur ;
+- target_id quand une mémoire existante précise est corrigée ou résolue.
+Utilise durable pour une préférence stable, current pour un état temporaire et
+event pour un fait ponctuel. Quand l'utilisateur dit que ça va mieux, résous ou
+supersède l'ancien signal au lieu de garder deux vérités actives. N'y place jamais
+une supposition, un diagnostic, une causalité, une donnée Garmin transformée en
+déclaration, une donnée secrète ou une simple formule de politesse. Une mémoire
+n'applique jamais silencieusement un objectif, une disponibilité, une fréquence
+confirmée, un plan ou une publication : ces décisions gardent leur action et leur
+confirmation structurées.
 Quand le dernier événement indique qu'une proposition vient d'être acceptée,
 confirme que tu as compris la décision, explique concrètement ce qu'elle change
 et poursuis naturellement l'accompagnement. Ne repropose pas la même action et
@@ -333,6 +369,71 @@ def mark_request_failed(request_id: str) -> None:
             _save_unlocked(messages)
 
 
+def retry_request(request_id: str) -> dict[str, Any]:
+    """Requeue one failed request without duplicating the user's message."""
+    with _LOCK:
+        messages = _load_unlocked()
+        request = next(
+            (
+                item for item in messages
+                if item.get("id") == request_id and item.get("role") == "user"
+            ),
+            None,
+        )
+        if request is None or request.get("status") != "failed":
+            raise ValueError("Cette demande ne peut pas être relancée.")
+        if any(
+            item.get("role") == "assistant" and item.get("reply_to") == request_id
+            for item in messages
+        ):
+            raise ValueError("Une réponse existe déjà pour cette demande.")
+        request["status"] = "pending"
+        request["retry_count"] = int(request.get("retry_count") or 0) + 1
+        _save_unlocked(messages)
+        return dict(request)
+
+
+def _has_additional_context(content: str) -> bool:
+    folded = " ".join(content.casefold().split())
+    return any(
+        marker in folded
+        for marker in (
+            "au fait", "depuis hier", "depuis quelques", "mais je", "et je",
+            "aussi très", "aussi tres", ";", ". ", "? ", "! ",
+        )
+    )
+
+
+def _validate_conversation_output(
+    response: CoachResponse, request: dict[str, Any], context: dict[str, Any]
+) -> CoachResponse:
+    content = " ".join(str(request.get("content") or "").split()).casefold()
+    for update in response.memory_updates:
+        if " ".join(update.source_excerpt.split()).casefold() not in content:
+            raise ValueError("Une mémoire proposée n'est pas ancrée dans le message utilisateur.")
+    hard_constraint_keys = {"medical_no_running", "medical_no_training"}
+    active_constraints = [
+        item for item in context.get("memoire_pertinente", [])
+        if isinstance(item, dict) and item.get("key") in hard_constraint_keys
+    ]
+    active_constraints.extend(
+        {"key": update.key}
+        for update in response.memory_updates
+        if update.key in hard_constraint_keys and update.operation in {"add", "upsert"}
+    )
+    training_actions = {
+        "continue_existing_plan", "create_plan", "modify_session", "adapt_plan"
+    }
+    frequency_change = (
+        response.action == "update_objective"
+        and response.objective_update is not None
+        and response.objective_update.sessions_per_week is not None
+    )
+    if active_constraints and (response.action in training_actions or frequency_change):
+        raise ValueError("Une contrainte déclarée active interdit cette action d'entraînement.")
+    return response
+
+
 def generate_response(
     request: dict[str, Any], settings: Settings, context: dict[str, Any]
 ) -> CoachResponse:
@@ -346,7 +447,9 @@ def generate_response(
     grounded = _grounded_current_plan_response(str(request.get("content") or ""), context)
     if grounded is not None:
         return grounded
-    explicit_action = _explicit_calendar_action(str(request.get("content") or ""), context)
+    explicit_action = None
+    if not _has_additional_context(str(request.get("content") or "")):
+        explicit_action = _explicit_calendar_action(str(request.get("content") or ""), context)
     if explicit_action is not None:
         return explicit_action
     """Produit la réponse affichée par le tableau de bord via l'API configurée."""
@@ -356,40 +459,50 @@ def generate_response(
             "automatiques est désactivé."
         )
     try:
+        payload = {"demande": request["content"], "contexte": context}
+        encoded_payload = json.dumps(
+            payload, ensure_ascii=False, separators=(",", ":")
+        )
+        started = time.perf_counter()
         if settings.ai_provider == "openai" and not settings.ai_base_url:
             model = routed_openai_model(
                 settings, "deep" if mode == "deep" else "economy"
             )
-            client = OpenAI(api_key=settings.ai_api_key, timeout=300.0, max_retries=0)
+            client = OpenAI(api_key=settings.ai_api_key, timeout=60.0, max_retries=0)
             result = client.responses.parse(
                 model=model,
                 reasoning={"effort": "none"},
                 instructions=COACH_CHAT_INSTRUCTIONS + "\n\n" + mode_instruction,
-                input=json.dumps(
-                    {"demande": request["content"], "contexte": context},
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                ),
+                input=encoded_payload,
                 text_format=CoachResponse,
                 max_output_tokens=output_budget,
             )
-            record_usage(result, "conversation", model)
+            record_usage(
+                result, "conversation", model,
+                duration_seconds=round(time.perf_counter() - started, 6),
+                payload_bytes=len(encoded_payload.encode("utf-8")),
+                cache_status="miss",
+            )
             if result.output_parsed is None:
                 raise RuntimeError("L'IA n'a pas produit de réponse structurée.")
-            return result.output_parsed.model_copy(update={"source": "openai"})
+            response = result.output_parsed.model_copy(update={"source": "openai"})
+            return _validate_conversation_output(response, request, context)
         response = structured_completion(
             settings,
             instructions=COACH_CHAT_INSTRUCTIONS + "\n\n" + mode_instruction,
-            payload={"demande": request["content"], "contexte": context},
+            payload=payload,
             result_type=CoachResponse,
             reasoning_effort="none",
             category="conversation",
             max_output_tokens=output_budget,
+            timeout_seconds=60.0,
+            max_retries=0,
         )
         response = _repair_invalid_training_action(
             request=request, response=response, settings=settings, context=context
         )
-        return response.model_copy(update={"source": "ai"})
+        response = response.model_copy(update={"source": "ai"})
+        return _validate_conversation_output(response, request, context)
     except Exception as exc:
         raise RuntimeError(
             "L'assistant IA est temporairement indisponible. Réessaie dans un instant."
@@ -511,6 +624,9 @@ def _repair_invalid_training_action(
         },
         result_type=CoachResponse,
         reasoning_effort="none",
+        category="conversation_repair",
+        timeout_seconds=60.0,
+        max_retries=0,
     )
     if repaired.action != "modify_session":
         raise ValueError("Le modÃ¨le n'a pas produit la modification confirmÃ©e.")
@@ -685,6 +801,8 @@ def store_response(request_id: str, response: CoachResponse) -> dict[str, Any]:
             "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
             "status": "complete",
             "reply_to": request_id,
+            "conversation_state": response.conversation_state,
+            "clarification_topic": response.clarification_topic,
             "plan_modifie": response.plan_modifie,
             "source": response.source,
             "action": response.action,
@@ -705,7 +823,12 @@ def store_response(request_id: str, response: CoachResponse) -> dict[str, Any]:
         }
         messages.append(answer)
         _save_unlocked(messages)
-        remember_facts(response.memory_updates)
+        if response.memory_updates:
+            apply_memory_updates(
+                response.memory_updates,
+                source_message_id=request_id,
+                source_text=str(request.get("content") or ""),
+            )
     return answer
 
 

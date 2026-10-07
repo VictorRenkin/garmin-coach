@@ -21,6 +21,7 @@ from garmin_coach import (
     history_storage,
     runtime_context,
     user_accounts,
+    planning_decision as planning_module,
 )
 from garmin_coach.availability import build_availability_v1
 from garmin_coach.config import Settings
@@ -166,6 +167,25 @@ def assessment_state(
             caveats=["Réserve précédente."],
         ),
     )
+
+
+def test_planning_receives_controlled_context_and_blocks_active_prohibition(monkeypatch) -> None:
+    runtime = prepare_runtime("conversation_planning", race_goal())
+    declared = [{
+        "category": "constraint",
+        "key": "medical_no_running",
+        "text": "L'utilisateur déclare une interdiction temporaire de courir.",
+        "scope": "current",
+    }]
+    monkeypatch.setattr(planning_module, "decision_memory_context", lambda decision: declared)
+    source = build_planning_recommendation_input_v1(
+        "conversation_planning", runtime, goal_assessment_state=assessment_state(runtime)
+    )
+    value = recommendation_for(source, sessions=2)
+
+    assert source.facts["conversation.active_declared_context"] == declared
+    with pytest.raises(PlanningDecisionError, match="contre-indication déclarée active"):
+        validate_planning_recommendation(value, source)
 
 
 def recommendation_for(
