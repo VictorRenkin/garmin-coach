@@ -125,7 +125,7 @@ Garmin n'est jamais une identité Motionest. Une reconnexion Garmin ne réinitia
 - [x] AI Goal Assessment V1 : interprétation structurée, groundée et explicitement déclenchée depuis les faits V1.
 - [x] Fréquence recommandée, confirmation et PlanConstraints.
 - [x] Onboarding V2 et écran de compréhension V1.
-- [ ] Contrat IA V2, PlanProposal V2 et validation locale.
+- [x] Contrat IA V2, PlanProposal V2 et validation locale.
 - [ ] Adaptation V2, dashboard final et production hardening.
 
 ### PLUS TARD
@@ -150,8 +150,8 @@ Garmin n'est jamais une identité Motionest. Une reconnexion Garmin ne réinitia
 | Fréquence recommandée / décision | DONE | Recommandation IA explicite, confirmation utilisateur persistée et PlanConstraints déterministes. |
 | Onboarding V2 | DONE | Trois étapes persistées séparément dans `motionest_inputs_v1.json`, progression V2 reprenable et aucun choix de fréquence. |
 | Écran de compréhension | DONE V1 | View-model factuel avec provenance, confirmations fingerprintées, corrections déclaratives et enchaînement assessment/recommandation/décision. |
-| Contrat IA V2 et plan V2 | TODO | Le flux IA/plan actuel est legacy. |
-| Validation locale du plan | TODO | Contraintes structurées et vérification nécessaires. |
+| Contrat IA V2 et plan V2 | DONE V2 LOCAL | Entrée compacte versionnée, génération explicite, cache fingerprinté et proposition stricte; le flux legacy reste disponible. |
+| Validation locale du plan | DONE V2 LOCAL | Fréquence confirmée, jours/dates, structure et contraintes dures sont validés avant toute exposition; aucune acceptation/publication. |
 | Publication Garmin V2 | PARTIAL | Publication/acceptation existent, mais sont liées au plan legacy. |
 | Recovery/Health | TODO | Absence correctement déclarée aujourd'hui. |
 | Adaptation hebdomadaire V2 | TODO | Un cycle legacy existe, pas la cible contractuelle. |
@@ -736,7 +736,7 @@ La sélection est volontairement déterministe, sans recherche vectorielle. Les 
 
 ### Phase 10 — Contrat IA V2 et prompt
 
-**STATUS : TODO**
+**STATUS : DONE V2 POUR LA GÉNÉRATION INITIALE**
 
 **OBJECTIF**
 
@@ -762,9 +762,13 @@ Credentials backend uniquement; données compactes; aucune clé dans frontend/lo
 
 Provider compatible OpenAI, validation JSON structurée, routage de modèle, suivi d'usage et fonctions `*_for_ai`; prompts legacy.
 
-**CE QUI RESTE À FAIRE**
+**PREUVES IMPLÉMENTÉES**
 
-Schéma V2, minimisation, redaction, budgets, timeouts/retries, version de prompt, validation stricte et tests mockés.
+`PlanGenerationInputV2` fournit uniquement le Goal canonique, le GoalAssessment courant lorsqu'il s'applique, PlanConstraints, des faits agrégés, confiance/limites et une projection Memory V2 pertinente. Les identifiants de mémoire et timestamps volatils sont retirés; e-mails et marqueurs de secrets sont exclus. Le prompt, le contrat et le fingerprint sont versionnés. GET lit uniquement l'état local; POST déclenche explicitement l'IA et réutilise un cache valide.
+
+**LIMITES RESTANTES**
+
+Le red teaming complet des champs utilisateur et le hardening production des quotas/observabilité restent à faire. Le flux legacy demeure disponible tant que ses consommateurs ne sont pas migrés.
 
 **TESTS REQUIS**
 
@@ -780,7 +784,7 @@ Appeler l'IA avec `historique_recent` brut ou exposer une clé au navigateur.
 
 ### Phase 11 — Génération initiale et validation locale du plan
 
-**STATUS : TODO**
+**STATUS : DONE V2 LOCAL**
 
 **OBJECTIF**
 
@@ -806,9 +810,13 @@ Valider nombre de séances, jours permis, dates, types, structure et conflits. L
 
 Modèles `InitialPlan`/`PlannedSession`, génération structurée legacy et placement selon jours legacy.
 
-**CE QUI RESTE À FAIRE**
+**PREUVES IMPLÉMENTÉES**
 
-Contrat V2, moteur de validation, erreurs réparables, explications et remplacement du contexte legacy.
+`PlanProposalV2` et son validateur local imposent la période, le nombre exact de séances confirmé, les dates uniques et permises, les valeurs positives, une structure interprétable et les contraintes dures actives. Une proposition invalide est persistée comme état `invalid` sans être exposée comme plan. Les états `missing`, `available`, `invalid`, `stale` et `generation_failed` sont distincts de l'acceptation.
+
+**LIMITES RESTANTES**
+
+L'acceptation, la réparation assistée, la conversion et la publication Garmin V2 sont explicitement hors de cette phase. Aucun moteur physiologique ou règle universelle de progression n'a été ajouté.
 
 **TESTS REQUIS**
 
@@ -1363,9 +1371,9 @@ Recovery/Health peut être absent du premier MVP si `unavailable` est correcteme
 4. Fréquence recommandée, confirmation et PlanConstraints — DONE.
 5. Onboarding V2 écrivant directement les contrats V1 — DONE.
 6. Écran de compréhension et orchestration du premier parcours — DONE V1.
-7. Contrat IA V2 pour la génération et prompt compact — PROCHAINE ÉTAPE.
-8. PlanProposal V2 et validation locale.
-9. Acceptation/publication Garmin V2.
+7. Contrat IA V2 pour la génération et prompt compact — DONE V2 LOCAL.
+8. PlanProposal V2 et validation locale — DONE V2 LOCAL.
+9. Acceptation/publication Garmin V2 — PROCHAINE ÉTAPE.
 10. Dashboard minimal V2.
 11. Analyse post-activité et adaptation de base.
 12. Hardening/migration/observabilité en continu, puis gate production.

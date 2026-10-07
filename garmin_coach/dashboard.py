@@ -106,6 +106,11 @@ from .planning_decision import (
     get_planning_decision_state,
     get_planning_recommendation_state,
 )
+from .plan_proposal import (
+    PlanProposalError,
+    generate_plan_proposal,
+    get_plan_proposal_state,
+)
 from .runtime_context import (
     build_runtime_motionest_context,
     load_motionest_inputs_v1,
@@ -1256,6 +1261,25 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 return
             _json_response(self, {"ok": True, **state.model_dump(mode="json")})
             return
+        if path == "/api/plan-proposal":
+            user_id = current_user_id()
+            if not user_id:
+                _json_response(self, {"ok": False, "message": "Utilisateur Motionest indisponible."}, 401)
+                return
+            try:
+                state = get_plan_proposal_state(user_id)
+            except PlanProposalError as exc:
+                _json_response(
+                    self,
+                    {"ok": True, "status": "missing", "proposal": None, "diagnostics": [exc.code]},
+                )
+                return
+            except Exception:
+                LOGGER.exception("Lecture PlanProposal indisponible")
+                _json_response(self, {"ok": False, "message": "PlanProposal est indisponible."}, 500)
+                return
+            _json_response(self, {"ok": True, **state.model_dump(mode="json")})
+            return
         if path == "/api/garmin/setup-status":
             _json_response(
                 self,
@@ -1817,6 +1841,23 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     {"ok": False, "message": "PlanningDecision est indisponible."},
                     500,
                 )
+                return
+            _json_response(self, {"ok": True, **state.model_dump(mode="json")})
+            return
+        if path == "/api/plan-proposal/generate":
+            user_id = current_user_id()
+            if not user_id:
+                _json_response(self, {"ok": False, "message": "Utilisateur Motionest indisponible."}, 401)
+                return
+            try:
+                state = generate_plan_proposal(user_id)
+            except PlanProposalError as exc:
+                status = 503 if exc.code == "ai_not_configured" else 409
+                _json_response(self, {"ok": False, "code": exc.code, "message": str(exc)}, status)
+                return
+            except Exception:
+                LOGGER.exception("Génération PlanProposal indisponible")
+                _json_response(self, {"ok": False, "message": "PlanProposal est indisponible."}, 500)
                 return
             _json_response(self, {"ok": True, **state.model_dump(mode="json")})
             return

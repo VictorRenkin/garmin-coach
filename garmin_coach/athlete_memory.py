@@ -301,9 +301,22 @@ def select_relevant_memory(
     return selected
 
 
-def decision_memory_context(decision: Literal["goal_assessment", "planning_recommendation"]) -> list[dict[str, Any]]:
-    categories = ({"goal", "constraint", "current_signal"} if decision == "goal_assessment" else {"constraint", "current_signal", "unrecorded_activity", "preference"})
-    return select_relevant_memory(decision, max_items=6 if decision == "goal_assessment" else 8, max_chars=1_200, categories=categories)
+def decision_memory_context(
+    decision: Literal[
+        "goal_assessment", "planning_recommendation", "plan_generation"
+    ],
+) -> list[dict[str, Any]]:
+    categories = (
+        {"goal", "constraint", "current_signal"}
+        if decision == "goal_assessment"
+        else {"constraint", "current_signal", "unrecorded_activity", "preference"}
+    )
+    return select_relevant_memory(
+        decision,
+        max_items=6 if decision == "goal_assessment" else 8,
+        max_chars=1_200,
+        categories=categories,
+    )
 
 
 def activity_trace(activities: list[dict[str, Any]]) -> dict[str, Any]:
