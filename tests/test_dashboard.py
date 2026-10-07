@@ -464,6 +464,8 @@ def test_dashboard_keeps_optional_context_non_blocking_and_updates_journey_in_pl
     assert "Sans fréquence, cette activité sera laissée à préciser plus tard" in html
     assert "journeyRecap" in html
     assert "renderFirstRunJourney()" in html
+    assert "renderFirstRunJourneyWithoutInternalDiagnostics" in html
+    assert "startsWith('Limites :')" in html
     assert "if($('journeyDialog').open)$('journeyDialog').close();await loadAll()" not in html
 
 
