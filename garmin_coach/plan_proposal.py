@@ -99,7 +99,7 @@ class DeclaredPlanContextV2(StrictContract):
     category: Literal["constraint", "current_signal", "unrecorded_activity", "preference"]
     key: str = Field(min_length=1, max_length=100)
     text: str = Field(min_length=1, max_length=300)
-    scope: Literal["current", "persistent", "event"]
+    scope: Literal["durable", "current", "event"]
 
 
 class PlanGenerationInputV2(StrictContract):

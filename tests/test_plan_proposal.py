@@ -7,7 +7,13 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from garmin_coach import config, plan_proposal as module, runtime_context, user_accounts
+from garmin_coach import (
+    athlete_memory,
+    config,
+    plan_proposal as module,
+    runtime_context,
+    user_accounts,
+)
 from garmin_coach.availability import build_availability_v1
 from garmin_coach.config import Settings
 from garmin_coach.goal import build_goal_v1
@@ -218,7 +224,7 @@ def test_relevant_memory_changes_fingerprint_irrelevant_memory_does_not(monkeypa
     monkeypatch.setattr(module, "decision_memory_context", projected)
     empty = build_plan_generation_input_v2("memory", runtime, recommendation_state=recommendation, decision_state=decision)
     all_memory.append({
-        "category": "preference", "key": "short_tuesday", "text": "Séance courte le mardi.", "scope": "persistent"
+        "category": "preference", "key": "short_tuesday", "text": "Séance courte le mardi.", "scope": "durable"
     })
     relevant = build_plan_generation_input_v2("memory", runtime, recommendation_state=recommendation, decision_state=decision)
     assert plan_generation_fingerprint(empty) != plan_generation_fingerprint(relevant)
@@ -241,7 +247,7 @@ def test_ai_input_is_compact_and_excludes_identifiers_secrets_and_raw_history(mo
             "category": "preference",
             "key": "contact_note",
             "text": "victor@example.com",
-            "scope": "persistent",
+            "scope": "durable",
             "updated_at": "2026-10-07T12:00:00+02:00",
         },
         {
@@ -249,7 +255,7 @@ def test_ai_input_is_compact_and_excludes_identifiers_secrets_and_raw_history(mo
             "category": "preference",
             "key": "short_tuesday",
             "text": "Séance courte le mardi.",
-            "scope": "persistent",
+            "scope": "durable",
             "updated_at": "2026-10-07T12:00:00+02:00",
         },
     ])
@@ -263,6 +269,53 @@ def test_ai_input_is_compact_and_excludes_identifiers_secrets_and_raw_history(mo
     assert "updated_at" not in payload
     assert "activityId" not in payload
     assert "startTimeLocal" not in payload
+
+
+def test_real_memory_v2_durable_and_current_scopes_enter_plan_context() -> None:
+    user_id = "real_memory_scopes"
+    runtime = runtime_for(user_id)
+    recommendation, decision = states(runtime)
+    source_text = (
+        "Je préfère une séance courte le mardi. "
+        "Je ressens actuellement une gêne légère au mollet."
+    )
+    with config.user_context(user_id):
+        athlete_memory.apply_memory_updates(
+            [
+                {
+                    "operation": "add",
+                    "category": "preference",
+                    "key": "short_tuesday",
+                    "scope": "durable",
+                    "text": "Préférer une séance courte le mardi.",
+                    "source_excerpt": "une séance courte le mardi",
+                },
+                {
+                    "operation": "add",
+                    "category": "current_signal",
+                    "key": "mild_calf_discomfort",
+                    "scope": "current",
+                    "text": "Gêne légère actuelle au mollet.",
+                    "source_excerpt": "une gêne légère au mollet",
+                },
+            ],
+            source_message_id="message_memory_scopes",
+            source_text=source_text,
+            now="2026-10-07T12:00:00+02:00",
+        )
+
+    with config.user_context(user_id):
+        source = build_plan_generation_input_v2(
+            user_id,
+            runtime,
+            recommendation_state=recommendation,
+            decision_state=decision,
+        )
+    contexts = {item.key: item for item in source.active_declared_context}
+
+    assert contexts["short_tuesday"].scope == "durable"
+    assert contexts["mild_calf_discomfort"].scope == "current"
+    assert len(plan_generation_fingerprint(source)) == 64
 
 
 def test_get_never_calls_ai_and_valid_cache_avoids_second_call(monkeypatch) -> None:
