@@ -455,6 +455,18 @@ def test_dashboard_opens_existing_onboarding_for_a_new_motionest_account() -> No
     assert "Le coach analyse tes données" in html
 
 
+def test_dashboard_keeps_optional_context_non_blocking_and_updates_journey_in_place() -> None:
+    html = dashboard.TEMPLATE_FILE.read_text(encoding="utf-8")
+
+    assert 'name="preferredSessions"' in html
+    assert '<select id="preferredSessions">' not in html
+    assert "Indique la fréquence de cette activité." not in html
+    assert "Sans fréquence, cette activité sera laissée à préciser plus tard" in html
+    assert "journeyRecap" in html
+    assert "renderFirstRunJourney()" in html
+    assert "if($('journeyDialog').open)$('journeyDialog').close();await loadAll()" not in html
+
+
 def test_dashboard_exposes_non_blocking_thinking_and_retry_states() -> None:
     html = dashboard.TEMPLATE_FILE.read_text(encoding="utf-8")
 
