@@ -110,6 +110,12 @@ from .plan_proposal import (
     PlanProposalError,
     generate_plan_proposal,
     get_plan_proposal_state,
+    proposal_fingerprint,
+)
+from .plan_acceptance import (
+    PlanAcceptanceError,
+    get_plan_acceptance_state,
+    record_plan_acceptance_decision,
 )
 from .runtime_context import (
     build_runtime_motionest_context,
@@ -1278,6 +1284,29 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 LOGGER.exception("Lecture PlanProposal indisponible")
                 _json_response(self, {"ok": False, "message": "PlanProposal est indisponible."}, 500)
                 return
+            payload = state.model_dump(mode="json")
+            payload["proposal_fingerprint"] = (
+                proposal_fingerprint(state.proposal) if state.proposal is not None else None
+            )
+            _json_response(self, {"ok": True, **payload})
+            return
+        if path == "/api/plan-proposal/decision":
+            user_id = current_user_id()
+            if not user_id:
+                _json_response(self, {"ok": False, "message": "Utilisateur Motionest indisponible."}, 401)
+                return
+            try:
+                state = get_plan_acceptance_state(user_id)
+            except PlanProposalError as exc:
+                _json_response(
+                    self,
+                    {"ok": True, "status": "missing", "decision": None, "diagnostics": [exc.code]},
+                )
+                return
+            except Exception:
+                LOGGER.exception("Lecture PlanAcceptance indisponible")
+                _json_response(self, {"ok": False, "message": "PlanAcceptance est indisponible."}, 500)
+                return
             _json_response(self, {"ok": True, **state.model_dump(mode="json")})
             return
         if path == "/api/garmin/setup-status":
@@ -1858,6 +1887,41 @@ class DashboardHandler(BaseHTTPRequestHandler):
             except Exception:
                 LOGGER.exception("Génération PlanProposal indisponible")
                 _json_response(self, {"ok": False, "message": "PlanProposal est indisponible."}, 500)
+                return
+            _json_response(self, {"ok": True, **state.model_dump(mode="json")})
+            return
+        if path == "/api/plan-proposal/decision":
+            user_id = current_user_id()
+            if not user_id:
+                _json_response(self, {"ok": False, "message": "Utilisateur Motionest indisponible."}, 401)
+                return
+            try:
+                content_length = int(self.headers.get("Content-Length", "0"))
+                if content_length < 0 or content_length > 8_192:
+                    raise ValueError("Requête de décision trop volumineuse.")
+                body = json.loads(self.rfile.read(content_length) or b"{}")
+                if not isinstance(body, dict):
+                    raise ValueError("Requête de décision invalide.")
+                state = record_plan_acceptance_decision(
+                    user_id,
+                    decision=body.get("decision"),
+                    input_fingerprint=str(body.get("input_fingerprint") or ""),
+                    expected_proposal_fingerprint=str(body.get("proposal_fingerprint") or ""),
+                    feedback=body.get("feedback"),
+                )
+            except (ValueError, TypeError, json.JSONDecodeError) as exc:
+                _json_response(self, {"ok": False, "message": str(exc)}, 400)
+                return
+            except PlanAcceptanceError as exc:
+                status = 422 if exc.code == "decision_invalid" else 409
+                _json_response(self, {"ok": False, "code": exc.code, "message": str(exc)}, status)
+                return
+            except PlanProposalError as exc:
+                _json_response(self, {"ok": False, "code": exc.code, "message": str(exc)}, 409)
+                return
+            except Exception:
+                LOGGER.exception("Décision PlanAcceptance indisponible")
+                _json_response(self, {"ok": False, "message": "PlanAcceptance est indisponible."}, 500)
                 return
             _json_response(self, {"ok": True, **state.model_dump(mode="json")})
             return

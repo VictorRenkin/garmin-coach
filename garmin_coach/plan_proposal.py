@@ -340,6 +340,17 @@ def plan_generation_fingerprint(source: PlanGenerationInputV2) -> str:
     return _digest({"schema_version": SCHEMA_VERSION, "prompt_version": PROMPT_VERSION, "prompt_digest": _prompt_digest(), "input": source.model_dump(mode="json")})
 
 
+def proposal_fingerprint(proposal: PlanProposalV2) -> str:
+    """Identify the exact canonical proposal content, independently of its input."""
+    return _digest(
+        {
+            "schema_version": proposal.schema_version,
+            "prompt_version": proposal.prompt_version,
+            "proposal": proposal.model_dump(mode="json"),
+        }
+    )
+
+
 def validate_plan_proposal(proposal: PlanProposalV2, source: PlanGenerationInputV2) -> PlanValidationResult:
     errors: list[PlanValidationIssue] = []
     def add(code: str, path: str, message: str) -> None:

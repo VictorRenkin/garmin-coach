@@ -216,7 +216,7 @@ L'ordre proposé est conservé avec deux précisions : l'intégration runtime de
 
 ### Phase 0 — Fondations compte, e-mail, parcours et Garmin
 
-**STATUS : PARTIAL**
+**STATUS : PARTIAL V2 — ACCEPTATION LOCALE TERMINÉE, PUBLICATION GARMIN V2 RESTANTE**
 
 **OBJECTIF**
 
@@ -858,9 +858,18 @@ Aucune publication avant acceptation; refus sans effet distant; idempotence; err
 
 État `plan_proposed`, endpoint de décision, `publication_allowed`, publication idempotente testée et refus conservant l'état.
 
+Le flux V2 possède désormais un `proposal_fingerprint` canonique distinct du
+fingerprint d'entrée, un journal atomique `plan_acceptance_v2.json` et des
+décisions explicites `accepted`, `refused` ou `revision_requested`. Le serveur
+revérifie les deux fingerprints au POST, conserve l'historique d'audit, traite
+les doubles clics de façon idempotente et marque une décision antérieure
+`stale` lorsque la proposition courante change. L'acceptation V2 ne modifie ni
+le flag legacy `publication_allowed`, ni Garmin, ni les contrats sources.
+
 **CE QUI RESTE À FAIRE**
 
-Relier le mécanisme au contrat V2, ajouter identifiant/version de proposition, journal d'audit et reprise de publication partielle.
+Construire la conversion Garmin V2, relier une acceptation exacte aux workouts
+créés, puis ajouter la reprise de publication partielle et son idempotence.
 
 **TESTS REQUIS**
 
