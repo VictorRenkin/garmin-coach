@@ -1,6 +1,6 @@
 # Motionest — validation du Coach conversationnel et de la mémoire V2
 
-Date de validation : 7 octobre 2026  
+Date de validation : 7 octobre 2026
 Branche : `codex/post-import-journey-v1`
 
 ## Résultat
@@ -126,4 +126,3 @@ Chaque appel structuré enregistre, lorsqu'ils sont disponibles : catégorie, mo
 - La promotion d'une déclaration vers Goal, Availability ou SubjectiveContext demande toujours une future action structurée explicite.
 - RecoveryState complet et diagnostic médical restent hors périmètre.
 - Les actions de plan continuent d'utiliser le système de confirmation existant.
-

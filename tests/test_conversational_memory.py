@@ -214,4 +214,3 @@ def test_retry_reuses_failed_message_without_duplication(tmp_path, monkeypatch) 
     assert retried["status"] == "pending"
     assert retried["retry_count"] == 1
     assert len(coach_chat.list_messages()) == 1
-
