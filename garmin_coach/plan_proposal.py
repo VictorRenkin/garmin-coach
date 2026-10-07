@@ -62,6 +62,9 @@ Si les zones cardiaques ne sont pas fiables, exprime l'intensité qualitativemen
 La distance est optionnelle. N'ajoute pas de pseudo-précision si les faits sont limités.
 Chaque séance doit avoir une structure concrète et interprétable pour une future conversion, sans publication Garmin.
 Une gêne légère est un contexte d'adaptation, pas une interdiction automatique. Une contrainte medical_no_running interdit la course.
+Le résumé, la stratégie, les objectifs et les explications sont destinés à l'utilisateur : n'y affiche jamais
+un path, un code de limitation ou du jargon interne. Décris les périodes concrètement, par exemple
+« aucune course enregistrée ces 4 dernières semaines » plutôt que « activité récente insuffisante ».
 Retourne uniquement le contrat PlanProposalV2 demandé."""
 
 

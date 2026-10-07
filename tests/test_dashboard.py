@@ -471,6 +471,36 @@ def test_dashboard_keeps_optional_context_non_blocking_and_updates_journey_in_pl
     assert "if($('journeyDialog').open)$('journeyDialog').close();await loadAll()" not in html
 
 
+def test_first_run_coaching_is_separate_conversational_and_user_facing() -> None:
+    html = dashboard.TEMPLATE_FILE.read_text(encoding="utf-8")
+
+    assert '<body class="first-run-active">' in html
+    assert "body.first-run-active .shell{visibility:hidden" in html
+    assert "1 · Tes repères" in html
+    assert "2 · Ta première semaine" in html
+    assert "review_plan" in html
+    assert 'id="journeyCoachReply"' in html
+    assert "Ta réponse au coach" in html
+    assert "Envoyer ma réponse" in html
+    assert "Est-ce que ce rythme te paraît réaliste ?" in html
+    assert "aucune course enregistrée ces 4 dernières semaines" in html
+    assert "peu de courses enregistrées ces 4 dernières semaines" in html
+    assert "Aucun pourcentage artificiel" not in html
+
+
+def test_plan_proposal_ui_keeps_internal_limitations_out_of_user_cards() -> None:
+    html = dashboard.TEMPLATE_FILE.read_text(encoding="utf-8")
+    start = html.index("function planSessionCard")
+    end = html.index("let planDecisionPending", start)
+    rendering = html[start:end]
+
+    assert "session.limitations" not in rendering
+    assert "proposal.limitations" not in rendering
+    assert "<b>Limites</b>" not in rendering
+    assert "<strong>Réserves</strong>" not in rendering
+    assert "Pourquoi cette séance" in rendering
+
+
 def test_dashboard_exposes_non_blocking_thinking_and_retry_states() -> None:
     html = dashboard.TEMPLATE_FILE.read_text(encoding="utf-8")
 

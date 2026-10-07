@@ -80,6 +80,9 @@ ou si la déclaration décrit une contre-indication explicite ou un risque médi
 de proposer une fréquence. L'insistance de l'utilisateur ne permet jamais d'ignorer un risque grave.
 Ne génère aucune séance, ne choisis aucun jour précis et ne construis aucun plan.
 Les supporting_facts doivent référencer exclusivement des paths présents dans facts.
+Dans les textes destinés à l'utilisateur, n'affiche jamais un path, un code de limitation ou du jargon interne.
+Décris les faits avec leur période concrète, par exemple « aucune course enregistrée ces 4 dernières semaines »
+plutôt que « activité récente insuffisante ».
 L'explication doit être concise et distinguer principes généraux et faits propres à l'utilisateur."""
 
 

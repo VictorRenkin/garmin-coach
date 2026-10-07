@@ -67,6 +67,9 @@ Une date de course absente doit apparaître comme incertitude ou réserve et int
 very_ambitious ne signifie jamais impossible. Ne promets aucun résultat sportif.
 Les supporting_facts doivent référencer exclusivement un path exact présent dans facts.
 Si la valeur d'un fait est un objet, cite son path parent exact sans ajouter le nom d'un sous-champ.
+Dans les textes destinés à l'utilisateur, n'affiche jamais un path, un code de limitation ou du jargon interne.
+Exprime les constats avec leur période concrète lorsqu'elle est disponible, par exemple
+« aucune course enregistrée ces 4 dernières semaines » plutôt que « activité récente insuffisante ».
 Si tu mentionnes un temps cible, convertis fidèlement goal_evidence.race.target_time_seconds ;
 en cas de doute, ne reformule pas ce temps dans le texte.
 L'explication doit être courte, utile et distinguer absence de preuve et preuve d'absence."""

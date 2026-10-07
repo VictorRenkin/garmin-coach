@@ -20,6 +20,8 @@ from .planning_decision import (
     get_planning_decision_state,
     get_planning_recommendation_state,
 )
+from .plan_acceptance import get_plan_acceptance_state
+from .plan_proposal import PlanProposalError, get_plan_proposal_state
 from .runtime_context import (
     RuntimeMotionestContextV1,
     build_runtime_motionest_context,
@@ -40,6 +42,7 @@ FirstRunStage = Literal[
     "frequency_unavailable",
     "confirm_frequency",
     "ready_for_plan",
+    "review_plan",
     "dashboard",
 ]
 
@@ -155,6 +158,20 @@ def _safe_decision_state(
             "plan_constraints": None,
             "diagnostics": [exc.code],
         }
+
+
+def _safe_plan_state(user_id: str) -> dict[str, Any]:
+    try:
+        return get_plan_proposal_state(user_id).model_dump(mode="json")
+    except PlanProposalError as exc:
+        return {"status": "missing", "proposal": None, "diagnostics": [exc.code]}
+
+
+def _safe_plan_acceptance_state(user_id: str) -> dict[str, Any]:
+    try:
+        return get_plan_acceptance_state(user_id).model_dump(mode="json")
+    except PlanProposalError as exc:
+        return {"status": "missing", "decision": None, "diagnostics": [exc.code]}
 
 
 def build_first_run_journey(user_id: str) -> dict[str, Any]:
@@ -301,7 +318,23 @@ def build_first_run_journey(user_id: str) -> dict[str, Any]:
                 "stage": "confirm_frequency",
                 "actions": ["confirm_frequency"],
             }
-        return {**base, "stage": "ready_for_plan", "actions": []}
+        proposal = _safe_plan_state(user_id)
+        base["plan_proposal"] = proposal
+        if proposal.get("status") != "available":
+            return {
+                **base,
+                "stage": "ready_for_plan",
+                "actions": ["generate_plan_proposal"],
+            }
+        acceptance = _safe_plan_acceptance_state(user_id)
+        base["plan_acceptance"] = acceptance
+        if acceptance.get("status") == "accepted":
+            return {**base, "stage": "dashboard", "actions": []}
+        return {
+            **base,
+            "stage": "review_plan",
+            "actions": ["accept_plan", "request_plan_revision"],
+        }
 
 
 def confirm_first_run_step(user_id: str, step: str) -> dict[str, Any]:
