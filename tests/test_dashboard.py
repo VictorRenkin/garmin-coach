@@ -480,8 +480,11 @@ def test_first_run_coaching_is_separate_conversational_and_user_facing() -> None
     assert "2 · Ta première semaine" in html
     assert "review_plan" in html
     assert 'id="journeyCoachReply"' in html
-    assert "Ta réponse au coach" in html
+    assert "Parle au coach" in html
     assert "Envoyer ma réponse" in html
+    assert "(recap||content).insertAdjacentHTML(recap?'afterend':'afterbegin'" in html
+    assert "goalAssessmentSummary(assessment,goal)" in html
+    assert "Tu veux débuter. Le coach va maintenant te proposer" in html
     assert "Est-ce que ce rythme te paraît réaliste ?" in html
     assert "aucune course enregistrée ces 4 dernières semaines" in html
     assert "peu de courses enregistrées ces 4 dernières semaines" in html

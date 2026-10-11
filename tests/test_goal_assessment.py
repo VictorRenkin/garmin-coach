@@ -193,9 +193,16 @@ def test_goal_assessment_receives_only_controlled_conversation_context(monkeypat
     assert source.facts["conversation.active_declared_context"] == declared
 
 
-@pytest.mark.parametrize("intent", ["progress", "beginner", "comeback"])
+@pytest.mark.parametrize(
+    ("intent", "expected_summary"),
+    [
+        ("progress", "Tu veux progresser sans objectif de course chronométré."),
+        ("beginner", "Tu veux débuter."),
+        ("comeback", "Tu veux reprendre."),
+    ],
+)
 def test_non_race_is_not_applicable_without_provider_call(
-    intent: str, monkeypatch: pytest.MonkeyPatch
+    intent: str, expected_summary: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     user_id = f"non_race_{intent}"
     runtime = prepare_runtime(user_id, build_goal_v1(intent))  # type: ignore[arg-type]
@@ -209,6 +216,7 @@ def test_non_race_is_not_applicable_without_provider_call(
     assert state.assessment is not None
     assert state.assessment.assessment_scope == "not_applicable"
     assert state.assessment.assessment == "not_applicable"
+    assert state.assessment.summary.startswith(expected_summary)
     assert state.generation_source == "local_scope_rule"
 
 

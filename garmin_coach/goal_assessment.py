@@ -465,11 +465,16 @@ def validate_goal_assessment(
 
 
 def _local_not_applicable(source: GoalAssessmentInputV1) -> GoalAssessmentV1:
+    summaries = {
+        "beginner": "Tu veux débuter. Le coach va maintenant te proposer un rythme de départ adapté à tes disponibilités et à ton historique.",
+        "comeback": "Tu veux reprendre. Le coach va maintenant te proposer un rythme progressif adapté à tes disponibilités et à ton historique.",
+        "progress": "Tu veux progresser sans objectif de course chronométré. Le coach va maintenant te proposer un rythme adapté à tes disponibilités et à ton historique.",
+    }
     return GoalAssessmentV1(
         assessment_scope="not_applicable",
         assessment="not_applicable",
         confidence="high",
-        summary="L'objectif actuel ne relève pas d'une évaluation de course.",
+        summary=summaries[source.goal_intent],
         explanation="Aucune faisabilité chronométrique n'est évaluée pour cette intention ; cela ne bloque pas les futures étapes de planification.",
         supporting_facts=[
             SupportingFact(path="goal_evidence.goal_intent", role="contextual")
