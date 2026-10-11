@@ -67,6 +67,7 @@ Une date de course absente doit apparaître comme incertitude ou réserve et int
 very_ambitious ne signifie jamais impossible. Ne promets aucun résultat sportif.
 Les supporting_facts doivent référencer exclusivement un path exact présent dans facts.
 Si la valeur d'un fait est un objet, cite son path parent exact sans ajouter le nom d'un sous-champ.
+N'invente jamais un path parent qui n'apparaît pas lui-même dans facts.
 Dans les textes destinés à l'utilisateur, n'affiche jamais un path, un code de limitation ou du jargon interne.
 Exprime les constats avec leur période concrète lorsqu'elle est disponible, par exemple
 « aucune course enregistrée ces 4 dernières semaines » plutôt que « activité récente insuffisante ».
@@ -278,6 +279,7 @@ def _fact_map(runtime: RuntimeMotionestContextV1) -> dict[str, Any]:
         {
             "goal_evidence.goal_intent": evidence.goal_intent,
             "goal_evidence.status": evidence.status,
+            "goal_evidence.race": evidence.race.model_dump(mode="json"),
             "goal_evidence.race.event_type": evidence.race.event_type,
             "goal_evidence.race.distance_km": evidence.race.distance_km,
             "goal_evidence.race.date": evidence.race.date,

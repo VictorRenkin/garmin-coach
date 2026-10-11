@@ -530,6 +530,23 @@ def test_performance_comparison_parent_is_available_as_a_grounding_fact() -> Non
     assert validate_goal_assessment(candidate, source) == candidate
 
 
+def test_race_parent_is_available_as_a_grounding_fact() -> None:
+    source = build_goal_assessment_input_v1(
+        prepare_runtime("race_parent", race_goal())
+    )
+    candidate = assessment_for(source, path="goal_evidence.race")
+
+    assert source.facts["goal_evidence.race"] == {
+        "event_type": "half_marathon",
+        "distance_km": 21.0975,
+        "date": "2027-04-18",
+        "days_to_event": 200,
+        "target_time_seconds": 6300,
+        "target_pace_seconds_per_km": pytest.approx(298.614),
+    }
+    assert validate_goal_assessment(candidate, source) == candidate
+
+
 def test_invalid_provider_response_is_explicit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
