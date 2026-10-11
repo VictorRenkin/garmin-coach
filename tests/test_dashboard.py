@@ -462,7 +462,7 @@ def test_dashboard_keeps_optional_context_non_blocking_and_updates_journey_in_pl
     assert '<select id="preferredSessions">' not in html
     assert "Indique la fréquence de cette activité." not in html
     assert "Sans fréquence, cette activité sera laissée à préciser plus tard" in html
-    assert "journeyRecap" in html
+    assert "journeyRecap" not in html
     assert "renderFirstRunJourney()" in html
     assert "['initial_intent','complete_declarations'].includes(state.journey?.stage)" in html
     assert "openOnboardingIfNeeded();" in html
@@ -482,9 +482,12 @@ def test_first_run_coaching_is_separate_conversational_and_user_facing() -> None
     assert 'id="journeyCoachReply"' in html
     assert "Parle au coach" in html
     assert "Envoyer ma réponse" in html
-    assert "(recap||content).insertAdjacentHTML(recap?'afterend':'afterbegin'" in html
+    assert "content.querySelector('.journey-assessment,.coach-answer')" in html
     assert "goalAssessmentSummary(assessment,goal)" in html
     assert "Tu veux débuter. Le coach va maintenant te proposer" in html
+    assert "L’avis du coach" in html
+    assert "Construisons ta première semaine" not in html
+    assert "Le coach construit ta semaine" in html
     assert "Est-ce que ce rythme te paraît réaliste ?" in html
     assert "aucune course enregistrée ces 4 dernières semaines" in html
     assert "peu de courses enregistrées ces 4 dernières semaines" in html
