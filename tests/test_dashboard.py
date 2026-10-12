@@ -334,11 +334,12 @@ def test_dashboard_chart_visibility_controls_and_tooltips() -> None:
     html = dashboard.TEMPLATE_FILE.read_text(encoding="utf-8")
 
     assert 'id="paceChartCard"' in html
-    assert 'id="hrChartCard" hidden' in html
-    assert 'id="elevationChartCard" hidden' in html
+    assert 'id="hrChartCard" role="tabpanel" aria-labelledby="hrChartTab" hidden' in html
+    assert 'id="elevationChartCard" role="tabpanel" aria-labelledby="elevationChartTab" hidden' in html
     assert 'data-chart="hrChartCard"' in html
     assert 'data-chart="elevationChartCard"' in html
     assert "tab.addEventListener('click'" in html
+    assert "event.key==='ArrowRight'" in html
     assert "pointermove" in html
     assert "fmtDuration(point.time)" in html
     assert "chart.label(point.value)" in html
@@ -358,8 +359,8 @@ def test_dashboard_history_is_clickable_and_loads_full_activity_detail() -> None
     assert 'class="row-btn"' in html
     assert 'class="history-row' in html
     assert 'data-activity-id="' in html
-    assert "row.addEventListener('click'" in html
-    assert "row.addEventListener('keydown'" in html
+    assert "row.querySelector('.row-btn').addEventListener('click',open)" in html
+    assert "row.addEventListener('click'" not in html
     assert "/details`" in html
     assert "renderCharts();renderZones();renderLaps();renderMessages()" in html
     assert "a.analysis?'Disponible':'En attente'" in html
@@ -487,11 +488,48 @@ def test_first_run_coaching_is_separate_conversational_and_user_facing() -> None
     assert "Tu veux débuter. Le coach va maintenant te proposer" in html
     assert "L’avis du coach" in html
     assert "Construisons ta première semaine" not in html
-    assert "Le coach construit ta semaine" in html
+    assert "Le coach prépare ta semaine" in html
     assert "Est-ce que ce rythme te paraît réaliste ?" in html
     assert "aucune course enregistrée ces 4 dernières semaines" in html
     assert "peu de courses enregistrées ces 4 dernières semaines" in html
     assert "Aucun pourcentage artificiel" not in html
+
+
+def test_first_run_presents_one_frequency_decision_and_one_week_screen() -> None:
+    html = dashboard.TEMPLATE_FILE.read_text(encoding="utf-8")
+
+    assert "Faisabilité de l’objectif" in html
+    assert "Fréquence proposée" in html
+    assert "Oui, ce rythme me convient" in html
+    assert "Je souhaite un autre rythme" in html
+    assert 'id="journeyFrequencyAlternative" hidden' in html
+    assert "confirmedSessionsPerWeek:Number(recommended)" in html
+    assert "Ta première semaine" in html
+    assert "Préparer ma semaine" in html
+    assert "Réessayer" in html
+    assert "Valider ma semaine" in html
+    assert "Génération" not in html
+
+
+def test_dashboard_has_four_deep_linked_inert_views() -> None:
+    html = dashboard.TEMPLATE_FILE.read_text(encoding="utf-8")
+
+    for view, label in (
+        ("home", "Accueil"),
+        ("week", "Ma semaine"),
+        ("activities", "Activités"),
+        ("coach", "Coach"),
+    ):
+        assert f'href="#{view}"' in html
+        assert f'data-dashboard-view="{view}"' in html
+        assert label in html
+    assert 'aria-current="page"' in html
+    assert "window.addEventListener('hashchange'" in html
+    assert "view.inert=!active" in html
+    assert "const next=`#activities/" in html
+    assert "#week/session/" in html
+    assert 'id="nextSessionButton"' in html
+    assert "renderNextSession()" in html
 
 
 def test_plan_proposal_ui_keeps_internal_limitations_out_of_user_cards() -> None:

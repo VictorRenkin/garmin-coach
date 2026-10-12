@@ -7,6 +7,8 @@ const { chromium } = require(process.argv[2]);
   page.on('pageerror', error => errors.push(error.message));
   await page.goto(process.argv[4], {waitUntil: 'networkidle'});
   await page.waitForTimeout(1200);
+  await page.evaluate(() => { location.hash = 'activities'; });
+  await page.waitForTimeout(250);
   const result = await page.evaluate(async () => {
     const endpoints = ['/api/activities','/api/plan','/api/profile','/api/coach/messages'];
     const statuses = {};
