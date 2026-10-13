@@ -293,6 +293,17 @@ def test_dashboard_uses_manual_refresh_and_separate_time_charts() -> None:
     assert 'id="syncBtn"' not in html
     assert 'id="paceChart"' in html
     assert 'id="hrChart"' in html
+
+
+def test_dashboard_distinguishes_garmin_delivery_states() -> None:
+    html = dashboard.TEMPLATE_FILE.read_text(encoding="utf-8")
+
+    assert "/api/garmin/workout-delivery" in html
+    assert "Séance enregistrée" in html
+    assert "Garmin Connect" in html
+    assert "Calendrier Garmin" in html
+    assert "À vérifier sur la montre" in html
+    assert "instructions_exported" in html or "La consigne complète reste affichée" in html
     assert 'id="elevationChart"' in html
     assert "Temps écoulé (min:s)" in html
 

@@ -55,6 +55,11 @@ from .garmin import (
     stored_tokens_available,
 )
 from .garmin_setup import setup_status, start_initial_setup
+from .garmin_delivery import (
+    GarminDeliveryError,
+    get_garmin_delivery_state,
+    publish_accepted_session,
+)
 from .first_run_journey import build_first_run_journey, confirm_first_run_step
 from .goal import goal_context_for_legacy_confidence
 from .availability import build_availability_v1
@@ -1309,6 +1314,39 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 return
             _json_response(self, {"ok": True, **state.model_dump(mode="json")})
             return
+        if path == "/api/garmin/workout-delivery":
+            user_id = current_user_id()
+            if not user_id:
+                _json_response(
+                    self,
+                    {"ok": False, "message": "Utilisateur Motionest indisponible."},
+                    401,
+                )
+                return
+            try:
+                state = get_garmin_delivery_state(user_id)
+            except GarminDeliveryError as exc:
+                _json_response(
+                    self,
+                    {
+                        "ok": True,
+                        "status": "unavailable",
+                        "sessions": [],
+                        "code": exc.code,
+                        "message": str(exc),
+                    },
+                )
+                return
+            except Exception:
+                LOGGER.exception("Lecture du suivi Garmin indisponible")
+                _json_response(
+                    self,
+                    {"ok": False, "message": "Le suivi Garmin est indisponible."},
+                    500,
+                )
+                return
+            _json_response(self, {"ok": True, **state})
+            return
         if path == "/api/garmin/setup-status":
             _json_response(
                 self,
@@ -1924,6 +1962,62 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 _json_response(self, {"ok": False, "message": "PlanAcceptance est indisponible."}, 500)
                 return
             _json_response(self, {"ok": True, **state.model_dump(mode="json")})
+            return
+        if path == "/api/garmin/workout-delivery":
+            user_id = current_user_id()
+            if not user_id:
+                _json_response(
+                    self,
+                    {"ok": False, "message": "Utilisateur Motionest indisponible."},
+                    401,
+                )
+                return
+            try:
+                content_length = int(self.headers.get("Content-Length", "0"))
+                if content_length < 0 or content_length > 4_096:
+                    raise ValueError("Requête Garmin trop volumineuse.")
+                body = json.loads(self.rfile.read(content_length) or b"{}")
+                if not isinstance(body, dict):
+                    raise ValueError("Requête Garmin invalide.")
+                session_index = int(body.get("session_index"))
+                requested_date = body.get("scheduled_date")
+                scheduled_date = (
+                    date.fromisoformat(str(requested_date)) if requested_date else None
+                )
+                delivery = publish_accepted_session(
+                    user_id,
+                    connect(load_settings()),
+                    session_index=session_index,
+                    scheduled_date=scheduled_date,
+                )
+            except (ValueError, TypeError, json.JSONDecodeError) as exc:
+                _json_response(self, {"ok": False, "message": str(exc)}, 400)
+                return
+            except GarminDeliveryError as exc:
+                status = 422 if exc.code in {
+                    "sport_not_supported",
+                    "session_structure_invalid",
+                    "session_duration_mismatch",
+                    "scheduled_date_in_past",
+                } else 409
+                _json_response(
+                    self,
+                    {"ok": False, "code": exc.code, "message": str(exc)},
+                    status,
+                )
+                return
+            except Exception:
+                LOGGER.exception("Envoi de la séance Garmin indisponible")
+                _json_response(
+                    self,
+                    {
+                        "ok": False,
+                        "message": "Garmin Connect n'a pas confirmé l'envoi.",
+                    },
+                    502,
+                )
+                return
+            _json_response(self, {"ok": True, "delivery": delivery})
             return
         if path == "/api/garmin/setup-retry":
             user_id = current_user_id()
