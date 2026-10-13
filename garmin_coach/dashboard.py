@@ -32,6 +32,7 @@ from .account_security import (
 from .ai_analysis import analyze_and_save, load_analysis
 from .activity_data import latest_hr_zone_boundaries, public_detail
 from .athlete_memory import activity_trace, select_relevant_memory
+from .coach_sport_context import build_coach_sport_context
 from .coach_chat import (
     add_assistant_prompt,
     claim_action,
@@ -578,6 +579,12 @@ def coach_context() -> dict[str, Any]:
             if isinstance(session, dict)
         ]
     user_id = current_user_id()
+    sport_context: dict[str, Any] = {"status": "unavailable"}
+    if user_id:
+        try:
+            sport_context = build_coach_sport_context(user_id)
+        except Exception as exc:
+            LOGGER.warning("Multisport coach context unavailable (%s)", type(exc).__name__)
     canonical_inputs: dict[str, Any] | None = None
     journey: dict[str, Any] | None = None
     planning_decision: dict[str, Any] | None = None
@@ -599,6 +606,7 @@ def coach_context() -> dict[str, Any]:
         "etape_parcours": journey.get("stage") if journey else None,
         "decision_frequence": planning_decision,
         "plan_actif": plan,
+        "contexte_multisport": sport_context,
         "courses_recentes": [
             {key: value for key, value in activity.items() if key != "analysis"}
             for activity in activities
@@ -2515,3 +2523,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
