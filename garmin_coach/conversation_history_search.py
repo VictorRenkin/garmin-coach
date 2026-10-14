@@ -17,6 +17,16 @@ MAX_SEARCH_BYTES = 24_000
 MAX_PERIODS = 2
 MAX_PERIOD_DAYS = 366
 MONTHS = ('janvier', 'fevrier', 'mars', 'avril', 'mai', 'juin', 'juillet', 'aout', 'septembre', 'octobre', 'novembre', 'decembre')
+SPORT_PATTERNS = (
+    (r'\b(velo|cyclisme|cycliste|cycling|biking|indoor_cycling)\b', 'cycling'),
+    (r'\b(course|couru|running|trail)\b', 'running'),
+    (r'\b(natation|nage|swimming)\b', 'swimming'),
+    (r'\b(football|soccer|foot)\b', 'football'),
+    (r'\b(marche|walking)\b', 'walking'),
+    (r'\b(randonnee|hiking)\b', 'hiking'),
+    (r'\b(musculation|strength)\b', 'strength'),
+    (r'\bpadel\b', 'padel'), (r'\btennis\b', 'tennis'),
+)
 
 
 def _detail_projection(activity: dict[str, Any]) -> dict[str, Any]:
@@ -50,14 +60,16 @@ def parse_history_request(content: str, reference_date: str) -> dict[str, Any]:
     iso_matches = re.findall(r'\b\d{4}-\d{2}-\d{2}\b', plain)
     previous_month = bool(re.search(r'\bmois (?:dernier|precedent)\b', plain))
     if not month_matches and not iso_matches and not previous_month:
-        if re.search(r'\b(volume|historique|bilan)\b', plain) and re.search(r'\b(velo|cyclisme|course|natation|entrainement\w*|activite\w*|evolu\w*)\b', plain):
+        if re.search(r'\b(volume|historique|bilan)\b', plain) and (any(re.search(pattern, plain) for pattern, _ in SPORT_PATTERNS) or re.search(r'\b(entrainement\w*|activite\w*|evolu\w*)\b', plain)):
             return {'status': 'needs_clarification', 'message': 'Quelle période souhaites-tu analyser ? Précise les mois et l’année, ou les dates.'}
         return {'status': 'not_requested'}
     # Do not redirect scheduling and future planning questions into historical retrieval.
     historical = bool(re.search(r'\b(historique|compare\w*|volume|bilan|activite\w*|entrainement\w*|sortie\w*|couru|roule|nage|fait|analyse\w*)\b', plain))
     if not historical or re.search(r'\b(planifie\w*|programme\w*|deplace\w*|reporte\w*)\b', plain):
         return {'status': 'not_requested'}
-    sports = [sport for pattern, sport in ((r'\b(velo|cyclisme|cycliste)\b','cycling'), (r'\b(course|couru|running)\b','running'), (r'\b(natation|nage|swimming)\b','swimming')) if re.search(pattern, plain)]
+    sports = [sport for pattern, sport in SPORT_PATTERNS if re.search(pattern, plain)]
+    if re.search(r'\b(rugby|basketball|basket|ski|squash|aviron|rowing|escalade|yoga|pilates|badminton|volleyball)\b', plain):
+        return {'status': 'needs_clarification', 'message': 'Ce sport ne peut pas être sélectionné avec certitude. Précise une discipline prise en charge ou demande explicitement tous les sports.'}
     if len(sports) > 1:
         return {'status': 'needs_clarification', 'message': 'Quel sport souhaites-tu analyser ?'}
     if not sports and re.search(r'\bsortie\w* longue\w*\b', plain):
@@ -102,7 +114,7 @@ def search_conversation_history(user_id: str, query: dict[str, Any]) -> dict[str
         return query
     periods = query.get('periods', [])
     sport = query.get('sport')
-    if not 1 <= len(periods) <= MAX_PERIODS or sport not in (None, 'running', 'cycling', 'swimming'):
+    if not 1 <= len(periods) <= MAX_PERIODS or sport not in (None, *(s for _, s in SPORT_PATTERNS)):
         raise ValueError('Invalid historical request')
     parsed = [(date.fromisoformat(p['start_date']), date.fromisoformat(p['end_date'])) for p in periods]
     if any(a > b or (b-a).days + 1 > MAX_PERIOD_DAYS for a,b in parsed):
@@ -114,7 +126,8 @@ def search_conversation_history(user_id: str, query: dict[str, Any]) -> dict[str
             results = []
             detail_loaded = False
             for start, end in parsed:
-                selected = [a for a in iter_local_activity_history(start_date=start, end_date=end) if sport is None or normalize_sport(a) == sport]
+                accepted = {'football', 'soccer'} if sport == 'football' else {sport}
+                selected = [a for a in iter_local_activity_history(start_date=start, end_date=end) if sport is None or normalize_sport(a) in accepted]
                 outside = bool((scope.get('cutoff_date') and start.isoformat() < scope['cutoff_date']) or (scope.get('reference_date') and end.isoformat() > scope['reference_date']))
                 incomplete = outside or (scope['source'] == 'multisport' and state.get('status') != 'complete')
                 shown = selected

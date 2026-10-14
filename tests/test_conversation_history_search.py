@@ -32,3 +32,9 @@ def test_future_and_invalid_dates_require_clarification():
 
 def test_calendar_request_is_not_historical():
     assert parse_history_request('Déplace ma sortie de course au 2026-10-20', '2026-10-14')['status'] == 'not_requested'
+
+
+def test_other_sports_are_not_silently_all_sports():
+    assert parse_history_request('Analyse mes activités football en juin 2025', '2026-10-14')['sport'] == 'football'
+    assert parse_history_request('Analyse mes activités padel en juin 2025', '2026-10-14')['sport'] == 'padel'
+    assert parse_history_request('Analyse mes activités rugby en juin 2025', '2026-10-14')['status'] == 'needs_clarification'
