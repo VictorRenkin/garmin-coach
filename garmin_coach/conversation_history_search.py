@@ -105,7 +105,8 @@ def parse_history_request(content: str, reference_date: str) -> dict[str, Any]:
     except ValueError:
         return {'status': 'needs_clarification', 'message': 'Précise une ou deux périodes historiques avec leurs dates et années (au maximum un an par période).'}
     return {'status': 'requested', 'periods': periods, 'sport': sports[0] if sports else None,
-            'longest_activity': bool(re.search(r'\bsortie\w* longue\w*\b', plain)), 'reference_date': reference_date}
+            'longest_activity': bool(re.search(r'\bsortie\w* longue\w*\b', plain)),
+            'evolution': bool(re.search(r'\b(evolu\w*|progress\w*)\b', plain)), 'reference_date': reference_date}
 
 
 def search_conversation_history(user_id: str, query: dict[str, Any]) -> dict[str, Any]:
@@ -138,12 +139,21 @@ def search_conversation_history(user_id: str, query: dict[str, Any]) -> dict[str
                 if shown and query.get('longest_activity'):
                     detail = _detail_projection(shown[0]) if not detail_loaded else {'status': 'not_loaded', 'reason': 'single_detail_lookup_budget'}
                     detail_loaded = True
+                monthly = []
+                if query.get('evolution'):
+                    month_start = start.replace(day=1)
+                    while month_start <= end:
+                        month_end = month_start.replace(day=calendar.monthrange(month_start.year, month_start.month)[1])
+                        facts = _window(selected, max(start, month_start), min(end, month_end)).model_dump(mode='json')
+                        monthly.append({key: facts[key] for key in ('start_date', 'end_date', 'status', 'activity_count', 'active_days', 'observed_duration_seconds', 'observed_distance_by_sport_km', 'average_weekly_frequency', 'training_load', 'metric_coverage')})
+                        month_start = month_end + timedelta(days=1)
                 results.append({'requested_period': {'start_date': start.isoformat(), 'end_date': end.isoformat()},
                                 'summary': _window(selected, start, end).model_dump(mode='json'),
                                 'coverage_status': 'incomplete_import' if incomplete else ('observed_local' if selected else 'no_local_activities'),
                                 'activities': [_project_activity(a) for a in shown], 'activities_omitted': len(selected)-len(shown),
                                 'activities_excluded_by_selection': len(selected)-len(shown), 'activities_truncated_by_budget': 0,
                                 'selected_activity_details': detail,
+                                'monthly_evolution': monthly,
                                 'selection': 'longest_observed_distance_not_workout_classification' if query.get('longest_activity') else 'chronological'})
         payload = {'status': 'available', 'sport': sport, 'periods': results,
                    'provenance': scope, 'import_status': state.get('status') if scope['source'] == 'multisport' else None,

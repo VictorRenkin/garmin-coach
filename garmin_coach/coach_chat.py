@@ -34,6 +34,9 @@ pas zéro activité. Les omissions de listes ne changent pas les totaux des synt
 Une sélection longest_observed_distance désigne la plus grande distance observée,
 elle ne prouve pas qu'une séance était une sortie longue planifiée. Ne prétends pas
 avoir lu des détails, des courbes ou des zones qui ne figurent pas dans les résultats.
+Lorsqu'une évolution est demandée et monthly_evolution est fourni, compare les
+sous-périodes mensuelles au lieu de donner seulement le total global. Un mois
+sans activité locale ne prouve pas l'absence d'entraînement réel.
 """
 
 
@@ -469,24 +472,22 @@ def generate_response(
 ) -> CoachResponse:
     reference = (context.get("contexte_multisport") or {}).get("reference_date")
     history_text = str(request.get("content") or "")
-    # Resolve a short year reply only after our exact historical clarification.
+    # Recover only a contiguous chain of our explicit historical clarifications.
     recent = context.get("conversation_recente") or []
-    period_clarification = "Quelle période souhaites-tu analyser ? Précise les mois et l’année, ou les dates."
     prior = [item for item in recent if isinstance(item, dict)]
     if prior and prior[-1].get("role") == "user" and prior[-1].get("content") == history_text:
         prior = prior[:-1]
-    if prior and prior[-1].get("role") == "assistant" and prior[-1].get("content") in (period_clarification, "Pour quel sport souhaites-tu retrouver cette sortie longue ?", "Quel sport souhaites-tu analyser ?"):
-        earlier_period = next((item for item in reversed(prior[:-1]) if item.get("role") == "user"), None)
-        if earlier_period:
-            history_text = str(earlier_period.get("content") or "") + " " + history_text
-    if re.fullmatch(r"\s*(?:en\s+)?((?:19|20)\d{2})\s*[.!]?\s*", history_text):
-        previous = [item for item in recent if isinstance(item, dict)]
-        if previous and previous[-1].get("role") == "user" and previous[-1].get("content") == history_text:
-            previous = previous[:-1]
-        if previous and previous[-1].get("role") == "assistant" and previous[-1].get("content") == "De quelle année parles-tu pour cette période historique ?":
-            earlier = next((item for item in reversed(previous[:-1]) if item.get("role") == "user"), None)
-            if earlier:
-                history_text = str(earlier.get("content") or "") + " " + history_text
+    clarification_messages = {
+        "Quelle période souhaites-tu analyser ? Précise les mois et l’année, ou les dates.",
+        "Pour quel sport souhaites-tu retrouver cette sortie longue ?",
+        "Quel sport souhaites-tu analyser ?",
+        "De quelle année parles-tu pour cette période historique ?",
+    }
+    while len(prior) >= 2 and prior[-1].get("role") == "assistant" and prior[-1].get("content") in clarification_messages and prior[-2].get("role") == "user":
+        if prior[-1].get("content") == "De quelle année parles-tu pour cette période historique ?" and not re.fullmatch(r"\s*(?:en\s+)?((?:19|20)\d{2})\s*[.!]?\s*", str(request.get("content") or "")):
+            break
+        history_text = str(prior[-2].get("content") or "") + " " + history_text
+        prior = prior[:-2]
     history_query = parse_history_request(history_text, reference) if reference else {"status": "not_requested"}
     if history_query["status"] == "needs_clarification":
         return CoachResponse(message=history_query["message"], conversation_state="needs_clarification", clarification_topic="historical_period")
