@@ -34,7 +34,7 @@ export default function App() {
   useEffect(() => { if (connection.server) refresh(); }, [connection.server, connection.token]);
 
   async function connect() {
-    try { const saved = await saveConnection(connection); setConnection(saved); await api('/api/mobile/health'); Alert.alert('Connecté', 'Le téléphone communique avec Garmin Coach.'); refresh(); }
+    try { const saved = await saveConnection(connection); setConnection(saved); await api('/api/mobile/health'); Alert.alert('Connecté', 'Le téléphone communique avec Motionest.'); refresh(); }
     catch (e) { Alert.alert('Connexion impossible', e instanceof Error ? e.message : 'Vérifie les informations.'); }
   }
   async function sync() {

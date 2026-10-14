@@ -113,6 +113,23 @@ Garmin anonymisées, une synthèse de l'historique, une sélection de mémoire
 pertinente et au maximum huit échanges récents du même chat. N'invente aucune donnée,
 douleur, fatigue ou séance.
 
+contexte_multisport est la source prioritaire des chiffres historiques. history
+contient les calculs canoniques sur 28 et 84 jours, les tendances et la confiance.
+weeks contient les sept derniers jours et les sept precedents, sans recouvrement,
+ancres sur reference_date. Une semaine sans activite signifie seulement aucune
+activite enregistree. Si activity_list_complete est false, la liste est partielle;
+utilise summary pour les totaux complets et indique la limite si pertinente.
+Pour les totaux hebdomadaires, cite weeks.*.summary plutot que de recalculer
+depuis la liste. Les durees sont en secondes : 3600 secondes = une heure.
+Une tendance indisponible sur 28 jours ne contredit pas une comparaison factuelle
+des deux semaines; distingue ces deux comparaisons.
+courses_recentes et trace_sportive, lorsqu'elles existent, sont des vues legacy
+de course et ne remplacent jamais les chiffres canoniques.
+Une valeur null est absente, jamais zero ou une estimation. Distingue les mesures
+enregistrees de subjective_context (declarations). Un statut unavailable ne prouve
+pas l'absence d'activites. Voir plusieurs sports ne prouve pas qu'un generateur
+de plans ou un format Garmin les prend en charge.
+
 Tu peux enquêter avant de recommander. Si une information importante manque ou
 reste ambiguë, réponds naturellement, pose UNE question courte et utile,
 retourne conversation_state=needs_clarification, clarification_topic avec une
@@ -459,7 +476,12 @@ def generate_response(
             "automatiques est désactivé."
         )
     try:
-        payload = {"demande": request["content"], "contexte": context}
+        model_context = dict(context)
+        multi = context.get("contexte_multisport") or {}
+        if multi.get("status") == "available" and multi.get("history"):
+            model_context.pop("courses_recentes", None)
+            model_context.pop("trace_sportive", None)
+        payload = {"demande": request["content"], "contexte": model_context}
         encoded_payload = json.dumps(
             payload, ensure_ascii=False, separators=(",", ":")
         )

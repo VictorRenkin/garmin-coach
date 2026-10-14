@@ -107,7 +107,7 @@ def save_codex_analysis(activity_id: str, source: Path) -> Path:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Pont entre Garmin Coach et Codex")
+    parser = argparse.ArgumentParser(description="Pont entre Motionest et Codex")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser(
         "activate", help="Commencer l'analyse aux prochaines courses seulement"

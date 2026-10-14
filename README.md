@@ -1,16 +1,16 @@
-# Garmin Coach
+# Motionest
 
 ### Tes courses Garmin deviennent un plan d’entraînement qui évolue avec toi.
 
-Garmin Coach est une application locale pour les coureurs qui veulent comprendre leurs séances et savoir quoi courir ensuite. Elle rassemble ton historique Garmin, détaille chaque sortie, fait analyser tes données par un coach IA et prépare la semaine suivante directement dans Garmin Connect.
+Motionest est une application locale pour les coureurs qui veulent comprendre leurs séances et savoir quoi courir ensuite. Elle rassemble ton historique Garmin, détaille chaque sortie, fait analyser tes données par un coach IA et prépare la semaine suivante directement dans Garmin Connect.
 
-![Aperçu du tableau de bord Garmin Coach](docs/assets/dashboard.png)
+![Aperçu du tableau de bord Motionest](docs/assets/dashboard.png)
 
 > Un seul tableau de bord pour passer de « voilà ma course » à « voilà ce que je dois faire maintenant ».
 
 ## Pourquoi l’utiliser ?
 
-Garmin Connect collecte beaucoup de données. Garmin Coach les transforme en décisions utiles :
+Garmin Connect collecte beaucoup de données. Motionest les transforme en décisions utiles :
 
 - **Comprendre chaque sortie** : allure, fréquence cardiaque, dénivelé, cadence, foulée et détail kilomètre par kilomètre.
 - **Recevoir un retour concret** : le coach compare la séance réalisée à l’objectif prévu et à l’historique récent.

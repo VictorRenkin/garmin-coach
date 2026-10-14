@@ -1,6 +1,6 @@
-# Garmin Coach Mobile
+# Motionest Mobile
 
-Application Expo pour Android et iPhone. Elle se connecte au moteur Garmin Coach exécuté sur l'ordinateur du même réseau Wi-Fi.
+Application Expo pour Android et iPhone. Elle se connecte au moteur Motionest exécuté sur l'ordinateur du même réseau Wi-Fi.
 
 ## Essai sur téléphone
 

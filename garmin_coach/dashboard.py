@@ -32,6 +32,7 @@ from .account_security import (
 from .ai_analysis import analyze_and_save, load_analysis
 from .activity_data import latest_hr_zone_boundaries, public_detail
 from .athlete_memory import activity_trace, select_relevant_memory
+from .conversation_sport_context import build_conversation_sport_context
 from .coach_chat import (
     add_assistant_prompt,
     claim_action,
@@ -573,6 +574,17 @@ def coach_context() -> dict[str, Any]:
             if isinstance(session, dict)
         ]
     user_id = current_user_id()
+    multisport_context: dict[str, Any] = {
+        "status": "unavailable", "reason": "no_active_user"
+    }
+    if user_id:
+        try:
+            multisport_context = build_conversation_sport_context(user_id)
+        except Exception as exc:
+            LOGGER.warning("Multisport coach context unavailable (%s)", type(exc).__name__)
+            multisport_context = {
+                "status": "unavailable", "reason": "canonical_context_unavailable"
+            }
     canonical_inputs: dict[str, Any] | None = None
     journey: dict[str, Any] | None = None
     planning_decision: dict[str, Any] | None = None
@@ -591,6 +603,7 @@ def coach_context() -> dict[str, Any]:
     return {
         "objectif": load_objective(),
         "declarations_v1": canonical_inputs,
+        "contexte_multisport": multisport_context,
         "etape_parcours": journey.get("stage") if journey else None,
         "decision_frequence": planning_decision,
         "plan_actif": plan,
@@ -1077,7 +1090,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             _json_response(self, {"messages": list_messages()})
             return
         if path == "/api/mobile/health":
-            _json_response(self, {"ok": True, "service": "Garmin Coach", "version": 1})
+            _json_response(self, {"ok": True, "service": "Motionest", "version": 1})
             return
         if path == "/api/coach/status":
             _json_response(self, coach_ai_status())
@@ -2442,7 +2455,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Tableau de bord Garmin Coach")
+    parser = argparse.ArgumentParser(description="Tableau de bord Motionest")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--no-browser", action="store_true")
@@ -2459,7 +2472,7 @@ def main() -> int:
         )
     server = ThreadingHTTPServer((args.host, args.port), DashboardHandler)
     url = f"http://{args.host}:{args.port}"
-    print(f"Garmin Coach est disponible sur {url}")
+    print(f"Motionest est disponible sur {url}")
     print("Appuie sur Ctrl+C pour arrêter.")
     if not args.no_browser:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
