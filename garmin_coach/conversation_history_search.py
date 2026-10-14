@@ -134,7 +134,8 @@ def search_conversation_history(user_id: str, query: dict[str, Any]) -> dict[str
                 shown = selected
                 if query.get('longest_activity'):
                     # No inferred workout label: identify only the longest observed distance.
-                    shown = sorted(selected, key=lambda a: _project_activity(a).get('distance_m') or -1, reverse=True)[:1]
+                    measured = [a for a in selected if _project_activity(a).get('distance_m') is not None]
+                    shown = sorted(measured, key=lambda a: _project_activity(a)['distance_m'], reverse=True)[:1]
                 detail = None
                 if shown and query.get('longest_activity'):
                     detail = _detail_projection(shown[0]) if not detail_loaded else {'status': 'not_loaded', 'reason': 'single_detail_lookup_budget'}
@@ -153,6 +154,7 @@ def search_conversation_history(user_id: str, query: dict[str, Any]) -> dict[str
                                 'activities': [_project_activity(a) for a in shown], 'activities_omitted': len(selected)-len(shown),
                                 'activities_excluded_by_selection': len(selected)-len(shown), 'activities_truncated_by_budget': 0,
                                 'selected_activity_details': detail,
+                                'candidate_status': ('selected_by_observed_distance' if shown else 'no_distance_candidate') if query.get('longest_activity') else 'not_requested',
                                 'monthly_evolution': monthly,
                                 'selection': 'longest_observed_distance_not_workout_classification' if query.get('longest_activity') else 'chronological'})
         payload = {'status': 'available', 'sport': sport, 'periods': results,
