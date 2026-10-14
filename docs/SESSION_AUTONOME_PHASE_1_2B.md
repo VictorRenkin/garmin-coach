@@ -26,7 +26,7 @@ La recherche doit réutiliser les lecteurs historiques locaux et leurs bornes d'
 
 La phase 1.2B ajoute `parse_history_request()` et `search_conversation_history()`. Le parseur français conservateur reconnaît mois avec année, comparaison de deux mois, intervalle ISO limité à 366 jours et mois dernier. Il limite une demande à deux périodes et demande une précision lorsque l'année, la période ou le sport manque. Les réponses courtes aux clarifications sont prises en compte, y compris le choix d'un sport après une demande multisport.
 
-Les filtres couvrent course, vélo, natation, triathlon, football/soccer, marche, randonnée, force, padel et tennis. Le trail suit la classification canonique running. Une discipline explicite non reconnue provoque une clarification. Les dates libres et « ce mois-ci » ne sont pas pris en charge ; aucun outil de recherche arbitraire autonome n'est ajouté au modèle.
+Les filtres couvrent course, vélo, natation, football/soccer, marche, randonnée, force, padel et tennis. Le trail suit la classification canonique running. Une discipline explicite non reconnue provoque une clarification. Les dates libres et « ce mois-ci » ne sont pas pris en charge ; aucun outil de recherche arbitraire autonome n'est ajouté au modèle.
 
 La recherche réutilise `iter_local_activity_history()`, `load_local_activity_with_details()` et `_window()` du moteur canonique. Pour une évolution, elle projette les périodes mensuelles dans les bornes de recherche, au maximum treize fenêtres. Il ne s'agit pas d'un nouveau moteur ni d'un recalcul des synthèses 28/84 déjà validées.
 
@@ -57,7 +57,7 @@ Les appels IA utilisent le fournisseur OpenAI et le routage existant inchangé :
 |---|---|
 | Juin, puis clarification vers 2025 | Trois activités : 15 km de course, 20 km de vélo, 2 h 30 au total |
 | Comparaison septembre/juillet 2025 en vélo | Septembre : trois activités, 90 km, 3 h 30 ; juillet : deux activités, 40 km, 1 h 40 |
-| Sortie longue du mois dernier, référence septembre 2026 | Candidate du 15 septembre : 18 km, 108 min ; période : deux courses, 24 km, 144 min |
+| Sortie longue de septembre 2026, référence au 14 octobre 2026 | Candidate du 15 septembre : 18 km, 108 min ; période : deux courses, 24 km, 144 min |
 | Mai 2025 vide | Absence d'activité enregistrée signalée, sans invention |
 | Évolution vélo juillet-septembre 2025, second cycle ciblé | Juillet 40 km, août sans activité enregistrée, septembre 90 km ; variation +50 km et +1 h 50, sans conclure à l'absence réelle d'entraînement en août |
 
@@ -78,7 +78,7 @@ Points de contrôle A : `9fd9991`, `96158f9`, `a294489`, `64f29f4`, puis `4ba1fd
 
 Point de reprise avant commit documentaire : branche `codex/motionest-phase-12b`, HEAD `75e262c`, worktree de livraison propre. `git diff --exit-code codex/motionest-phase-12b-quality codex/motionest-phase-12b -- garmin_coach tests` ne montre aucune différence. L'orchestrateur a recontrôlé les 301 fichiers du manifeste original : tous inchangés, aucun manquant. La HEAD originale reste `68c704a` et ses modifications locales sont intactes.
 
-Les sept fichiers listés ci-dessus constituent la livraison de cette phase, hors fichiers source de la sauvegarde 1.2A. Les deux documents sont enregistrés dans un commit dédié sur `codex/motionest-phase-12b-docs`, destiné à être repris sur la branche de livraison. Son SHA est fourni dans le compte rendu final Git de l'orchestrateur plutôt qu'inscrit récursivement dans son propre contenu. Les worktrees qualité et documentation restent actifs pour traçabilité ; aucune archive de ces worktrees n'est annoncée.
+Les sept fichiers listés ci-dessus constituent la livraison de cette phase, hors fichiers source de la sauvegarde 1.2A. Les deux documents sont enregistrés dans un commit dédié sur `codex/motionest-phase-12b-docs`, repris sur la branche de livraison au checkpoint `b01b65f`. Son SHA est fourni dans le compte rendu final Git de l'orchestrateur plutôt qu'inscrit récursivement dans son propre contenu. Les worktrees qualité et documentation restent actifs pour traçabilité ; aucune archive de ces worktrees n'est annoncée.
 
 Les capacités sportives déjà présentes sont documentées dans `CAPACITES_SPORTIVES_PHASE_2_PREPARATION.md`, sans développement de phase 2.
 
