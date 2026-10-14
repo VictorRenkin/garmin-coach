@@ -27,6 +27,8 @@ SPORT_PATTERNS = (
     (r'\b(musculation|strength)\b', 'strength'),
     (r'\bpadel\b', 'padel'), (r'\btennis\b', 'tennis'),
 )
+UNSUPPORTED_SPORT_PATTERN = r'\b(rugby|basketball|basket|ski|squash|aviron|rowing|escalade|yoga|pilates|badminton|volleyball)\b'
+UNSUPPORTED_SPORT_CLARIFICATION = 'Ce sport ne peut pas être sélectionné avec certitude. Précise une discipline prise en charge ou demande explicitement tous les sports.'
 
 
 def _detail_projection(activity: dict[str, Any]) -> dict[str, Any]:
@@ -68,8 +70,8 @@ def parse_history_request(content: str, reference_date: str) -> dict[str, Any]:
     if not historical or re.search(r'\b(planifie\w*|programme\w*|deplace\w*|reporte\w*)\b', plain):
         return {'status': 'not_requested'}
     sports = [sport for pattern, sport in SPORT_PATTERNS if re.search(pattern, plain)]
-    if re.search(r'\b(rugby|basketball|basket|ski|squash|aviron|rowing|escalade|yoga|pilates|badminton|volleyball)\b', plain):
-        return {'status': 'needs_clarification', 'message': 'Ce sport ne peut pas être sélectionné avec certitude. Précise une discipline prise en charge ou demande explicitement tous les sports.'}
+    if re.search(UNSUPPORTED_SPORT_PATTERN, plain):
+        return {'status': 'needs_clarification', 'message': UNSUPPORTED_SPORT_CLARIFICATION}
     if len(sports) > 1:
         return {'status': 'needs_clarification', 'message': 'Quel sport souhaites-tu analyser ?'}
     if not sports and re.search(r'\bsortie\w* longue\w*\b', plain):

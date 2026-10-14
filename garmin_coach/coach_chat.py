@@ -17,7 +17,7 @@ from .ai_provider import routed_openai_model, structured_completion
 from .ai_usage import record_usage
 from .athlete_memory import MemoryUpdate, apply_memory_updates
 from .config import DATA_DIR, Settings, ensure_directories, current_user_id
-from .conversation_history_search import parse_history_request, search_conversation_history
+from .conversation_history_search import parse_history_request, search_conversation_history, SPORT_PATTERNS, UNSUPPORTED_SPORT_PATTERN, UNSUPPORTED_SPORT_CLARIFICATION
 
 
 MESSAGES_FILE = DATA_DIR / "coach_messages.json"
@@ -482,11 +482,19 @@ def generate_response(
         "Pour quel sport souhaites-tu retrouver cette sortie longue ?",
         "Quel sport souhaites-tu analyser ?",
         "De quelle année parles-tu pour cette période historique ?",
+        UNSUPPORTED_SPORT_CLARIFICATION,
     }
     while len(prior) >= 2 and prior[-1].get("role") == "assistant" and prior[-1].get("content") in clarification_messages and prior[-2].get("role") == "user":
         if prior[-1].get("content") == "De quelle année parles-tu pour cette période historique ?" and not re.fullmatch(r"\s*(?:en\s+)?((?:19|20)\d{2})\s*[.!]?\s*", str(request.get("content") or "")):
             break
-        history_text = str(prior[-2].get("content") or "") + " " + history_text
+        earlier_text = str(prior[-2].get("content") or "")
+        if prior[-1].get("content") in ("Quel sport souhaites-tu analyser ?", UNSUPPORTED_SPORT_CLARIFICATION):
+            # Replace an ambiguous discipline selection, preserving only its dates/intent.
+            earlier_text = ''.join(c for c in unicodedata.normalize('NFKD', earlier_text.lower()) if not unicodedata.combining(c))
+            for sport_pattern, _ in SPORT_PATTERNS:
+                earlier_text = re.sub(sport_pattern, '', earlier_text)
+            earlier_text = re.sub(UNSUPPORTED_SPORT_PATTERN, '', earlier_text)
+        history_text = earlier_text + " " + history_text
         prior = prior[:-2]
     history_query = parse_history_request(history_text, reference) if reference else {"status": "not_requested"}
     if history_query["status"] == "needs_clarification":
