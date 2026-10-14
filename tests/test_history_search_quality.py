@@ -61,6 +61,30 @@ def test_cycling_aliases_use_existing_normalization(sport):
     assert result["periods"][0]["summary"]["activity_count"] == 1
 
 
+def test_sport_clarification_replaces_ambiguous_selection(monkeypatch):
+    from garmin_coach import coach_chat
+    from garmin_coach.config import Settings
+    captured = {}
+    class Responses:
+        def parse(self, **kwargs):
+            captured.update(json.loads(kwargs["input"])["contexte"])
+            return type("Result", (), {"output_parsed": coach_chat.CoachResponse(message="ok")})()
+    class Client:
+        def __init__(self, **kwargs):
+            self.responses = Responses()
+    monkeypatch.setattr(coach_chat, "OpenAI", Client)
+    monkeypatch.setattr(coach_chat, "record_usage", lambda *args, **kwargs: None)
+    seed(sport="cycling", day="2025-06-15")
+    context = {"contexte_multisport": {"reference_date": "2026-09-30"}, "conversation_recente": [
+        {"role": "user", "content": "Analyse vélo et natation en juin 2025"},
+        {"role": "assistant", "content": "Quel sport souhaites-tu analyser ?"},
+    ]}
+    with config.user_context("alice"):
+        response = coach_chat.generate_response({"content": "vélo"}, Settings(None, None, 300, "fake", "test"), context)
+    assert response.conversation_state != "needs_clarification"
+    assert captured["recherche_historique"]["sport"] == "cycling"
+
+
 def test_period_boundaries_are_inclusive():
     seed(day="2026-07-01")
     with config.user_context("alice"):
@@ -184,3 +208,66 @@ def test_detail_exception_retains_observed_metadata_without_private_error(monkey
     assert result["periods"][0]["summary"]["activity_count"] == 1
     assert result["periods"][0]["selected_activity_details"]["status"] == "unavailable"
     assert "secret@example.com" not in json.dumps(result)
+
+
+def test_evolution_retains_empty_month_and_exact_distances():
+    seed(day="2025-07-15", sport="cycling")
+    with config.user_context("alice"):
+        for ident, day, distance in [("july", "2025-07-20", 35000), ("september", "2025-09-20", 90000)]:
+            history_storage.save_activity_metadata({"activityId": ident, "activityType": {"typeKey": "cycling"}, "startTimeLocal": day + "T12:00:00", "distance": distance, "movingDuration": 1800})
+    result = search.search_conversation_history("alice", query("Analyse l'évolution de mon volume vélo de juillet à septembre 2025"))
+    monthly = result["periods"][0]["monthly_evolution"]
+    assert [m["observed_distance_by_sport_km"].get("cycling", 0) for m in monthly] == [40, 0, 90]
+    assert [m["activity_count"] for m in monthly] == [2, 0, 1]
+    assert [(m["start_date"], m["end_date"]) for m in monthly] == [("2025-07-01", "2025-07-31"), ("2025-08-01", "2025-08-31"), ("2025-09-01", "2025-09-30")]
+
+
+def test_evolution_monthly_bounds_are_clipped_to_requested_period():
+    seed(day="2025-07-15", sport="cycling")
+    result = search.search_conversation_history("alice", query("Analyse l'évolution vélo du 2025-07-15 au 2025-09-10"))
+    monthly = result["periods"][0]["monthly_evolution"]
+    assert monthly[0]["start_date"] == "2025-07-15"
+    assert monthly[-1]["end_date"] == "2025-09-10"
+    assert len(monthly) == 3
+
+
+def test_missing_distance_never_selects_arbitrary_longest(monkeypatch):
+    with config.user_context("alice"):
+        history_import.initialize_history_import("all", reference_date=date(2026, 9, 30))
+        history_storage.save_activity_metadata({"activityId": "PRIVATE-ID-alice-0", "activityType": {"typeKey": "running"}, "startTimeLocal": "2026-07-01T12:00:00", "movingDuration": 1800})
+    def forbidden(*args):
+        pytest.fail("No measured distance means no longest detail candidate")
+    monkeypatch.setattr(search, "load_local_activity_with_details", forbidden)
+    result = search.search_conversation_history("alice", query("Analyse ma sortie longue de course en juillet 2026"))
+    period = result["periods"][0]
+    assert period["candidate_status"] == "no_distance_candidate"
+    assert period["activities"] == []
+    assert period["selected_activity_details"] is None
+
+
+def test_clarification_chain_preserves_requested_sport_and_period(monkeypatch):
+    from garmin_coach import coach_chat
+    from garmin_coach.config import Settings
+    captured = {}
+    class Responses:
+        def parse(self, **kwargs):
+            captured.update(json.loads(kwargs["input"])["contexte"])
+            return type("Result", (), {"output_parsed": coach_chat.CoachResponse(message="ok")})()
+    class Client:
+        def __init__(self, **kwargs):
+            self.responses = Responses()
+    monkeypatch.setattr(coach_chat, "OpenAI", Client)
+    monkeypatch.setattr(coach_chat, "record_usage", lambda *args, **kwargs: None)
+    seed(sport="cycling", day="2025-06-15")
+    context = {"contexte_multisport": {"reference_date": "2026-09-30"}, "conversation_recente": [
+        {"role": "user", "content": "Analyse mon volume vélo"},
+        {"role": "assistant", "content": "Quelle période souhaites-tu analyser ? Précise les mois et l’année, ou les dates."},
+        {"role": "user", "content": "juin"},
+        {"role": "assistant", "content": "De quelle année parles-tu pour cette période historique ?"},
+    ]}
+    with config.user_context("alice"):
+        coach_chat.generate_response({"content": "2025"}, Settings(None, None, 300, "fake", "test"), context)
+    result = captured["recherche_historique"]
+    assert result["sport"] == "cycling"
+    assert result["periods"][0]["requested_period"] == {"start_date": "2025-06-01", "end_date": "2025-06-30"}
+    assert result["periods"][0]["summary"]["activity_count"] == 1
