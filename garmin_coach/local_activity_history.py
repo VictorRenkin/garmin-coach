@@ -75,8 +75,8 @@ def local_history_scope() -> dict[str, str | None]:
         "source": source,
         "scope": str(state.get("scope")) if source == "multisport" else None,
         "reference_date": (
-            str(state.get("reference_date"))
-            if source == "multisport" and state.get("reference_date")
+            max(str(value) for value in (state.get("reference_date"), state.get("latest_sync_date")) if value)
+            if source == "multisport" and (state.get("reference_date") or state.get("latest_sync_date"))
             else None
         ),
         "cutoff_date": (
@@ -91,7 +91,7 @@ def _scope_bounds(source: str) -> tuple[date | None, date | None]:
     if source != "multisport":
         return None, None
     state = load_history_import(detect_stale=False)
-    reference = _date_filter(state.get("reference_date"))
+    reference = max(filter(None, (_date_filter(state.get("reference_date")), _date_filter(state.get("latest_sync_date")))), default=None)
     cutoff = _date_filter(state.get("cutoff_date"))
     return cutoff, reference
 

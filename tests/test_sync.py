@@ -1,6 +1,13 @@
 from pathlib import Path
+import pytest
 
 from garmin_coach import sync
+
+
+@pytest.fixture(autouse=True)
+def isolate_multisport_storage(tmp_path, monkeypatch):
+    monkeypatch.setattr('garmin_coach.config.GLOBAL_DATA_DIR', tmp_path / 'data')
+    monkeypatch.setattr('garmin_coach.config.USERS_DATA_DIR', tmp_path / 'data' / 'users')
 
 
 class FakeGarmin:

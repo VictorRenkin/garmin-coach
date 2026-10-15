@@ -25,6 +25,8 @@ _FIELDS = {
     "status",
     "scope",
     "reference_date",
+    "latest_sync_date",
+    "latest_sync_anchor_ids",
     "cutoff_date",
     "page_size",
     "next_offset",
@@ -119,6 +121,8 @@ def _empty_state(*, status: str = "idle", error: str = "") -> dict[str, Any]:
         "status": status,
         "scope": DEFAULT_SCOPE,
         "reference_date": None,
+        "latest_sync_date": None,
+        "latest_sync_anchor_ids": [],
         "cutoff_date": None,
         "page_size": configured_page_size(),
         "next_offset": 0,
@@ -171,6 +175,7 @@ def _validate_state(payload: object) -> dict[str, Any]:
         payload.get("last_page_fingerprint") or ""
     )
     state["resume_anchor_ids"] = payload.get("resume_anchor_ids") or []
+    state["latest_sync_anchor_ids"] = payload.get("latest_sync_anchor_ids") or []
     if state["schema_version"] != SCHEMA_VERSION:
         raise ValueError("Version d’état d’import inconnue.")
     if state["status"] not in VALID_STATUSES:
@@ -191,7 +196,9 @@ def _validate_state(payload: object) -> dict[str, Any]:
         not isinstance(value, str) for value in state["resume_anchor_ids"]
     ):
         raise ValueError("Ancres de reprise invalides.")
-    for field in ("reference_date", "cutoff_date"):
+    if not isinstance(state['latest_sync_anchor_ids'], list) or len(state['latest_sync_anchor_ids']) > 1000 or any(not isinstance(value, str) for value in state['latest_sync_anchor_ids']):
+        raise ValueError('Ancres de synchronisation invalides.')
+    for field in ("reference_date", "cutoff_date", "latest_sync_date"):
         if state[field] is not None:
             date.fromisoformat(str(state[field]))
     for field in ("started_at", "updated_at", "heartbeat_at"):
