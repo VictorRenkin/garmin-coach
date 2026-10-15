@@ -83,6 +83,7 @@ class RuntimeMotionestContextV1(StrictModel):
     context: MotionestContextV1
     goal_evidence: GoalEvidenceV1 | None
     training_pattern: TrainingPatternEvidenceV1
+    conversation_history: dict[str, Any] = Field(default_factory=dict)
 
 
 def _unknown_subjective_context() -> SubjectiveContextV1:
@@ -403,4 +404,22 @@ def build_runtime_motionest_context(
         context=context,
         goal_evidence=goal_evidence,
         training_pattern=training_pattern,
+        conversation_history={
+            "coverage": summary.coverage.model_dump(mode="json"),
+            "source": summary.source,
+            "scope": summary.scope,
+            "scope_cutoff_date": summary.scope_cutoff_date,
+            "windows": {key: summary.windows[key].model_dump(mode="json")
+                        for key in ("last_28_days", "last_84_days")},
+            "trends": summary.trends.model_dump(mode="json"),
+            "confidence": {
+                "components": {key: value.model_dump(mode="json", exclude={"evidence"})
+                               for key, value in confidence.components},
+                "missing_data": [item.model_dump(mode="json") for item in confidence.missing_data],
+                "stale_data": [item.model_dump(mode="json") for item in confidence.stale_data],
+                "warnings": [item.model_dump(mode="json") for item in confidence.warnings],
+                "training_history_limitation": confidence.training_history_confidence.limitation,
+                "current_state_limitation": confidence.current_state_confidence.limitation,
+            },
+        },
     )

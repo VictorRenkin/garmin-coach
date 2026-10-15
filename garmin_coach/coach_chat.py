@@ -16,12 +16,28 @@ from pydantic import BaseModel, Field, model_validator
 from .ai_provider import routed_openai_model, structured_completion
 from .ai_usage import record_usage
 from .athlete_memory import MemoryUpdate, apply_memory_updates
-from .config import DATA_DIR, Settings, ensure_directories
+from .config import DATA_DIR, Settings, ensure_directories, current_user_id
+from .conversation_history_search import parse_history_request, search_conversation_history, SPORT_PATTERNS, UNSUPPORTED_SPORT_PATTERN, UNSUPPORTED_SPORT_CLARIFICATION
 
 
 MESSAGES_FILE = DATA_DIR / "coach_messages.json"
 COACH_DRAFTS_DIR = DATA_DIR / "coach_drafts"
 _LOCK = threading.Lock()
+
+HISTORY_SEARCH_INSTRUCTIONS = """
+Le champ recherche_historique contient une lecture locale ciblée des périodes demandées.
+Pour ces périodes, utilise ses synthèses canoniques, jamais les fenêtres 28/84 jours
+comme substitut. Cite les dates et le sport sélectionnés. Une couverture incomplete_import
+ne permet pas de conclure à une absence d'entraînement. no_local_activities signifie
+seulement aucune activité locale trouvée. unavailable signifie une erreur de lecture,
+pas zéro activité. Les omissions de listes ne changent pas les totaux des synthèses.
+Une sélection longest_observed_distance désigne la plus grande distance observée,
+elle ne prouve pas qu'une séance était une sortie longue planifiée. Ne prétends pas
+avoir lu des détails, des courbes ou des zones qui ne figurent pas dans les résultats.
+Lorsqu'une évolution est demandée et monthly_evolution est fourni, compare les
+sous-périodes mensuelles au lieu de donner seulement le total global. Un mois
+sans activité locale ne prouve pas l'absence d'entraînement réel.
+"""
 
 
 class ObjectiveUpdate(BaseModel):
@@ -112,6 +128,23 @@ en moins de 180 mots. Le contexte contient l'objectif, le plan, les métriques
 Garmin anonymisées, une synthèse de l'historique, une sélection de mémoire
 pertinente et au maximum huit échanges récents du même chat. N'invente aucune donnée,
 douleur, fatigue ou séance.
+
+contexte_multisport est la source prioritaire des chiffres historiques. history
+contient les calculs canoniques sur 28 et 84 jours, les tendances et la confiance.
+weeks contient les sept derniers jours et les sept precedents, sans recouvrement,
+ancres sur reference_date. Une semaine sans activite signifie seulement aucune
+activite enregistree. Si activity_list_complete est false, la liste est partielle;
+utilise summary pour les totaux complets et indique la limite si pertinente.
+Pour les totaux hebdomadaires, cite weeks.*.summary plutot que de recalculer
+depuis la liste. Les durees sont en secondes : 3600 secondes = une heure.
+Une tendance indisponible sur 28 jours ne contredit pas une comparaison factuelle
+des deux semaines; distingue ces deux comparaisons.
+courses_recentes et trace_sportive, lorsqu'elles existent, sont des vues legacy
+de course et ne remplacent jamais les chiffres canoniques.
+Une valeur null est absente, jamais zero ou une estimation. Distingue les mesures
+enregistrees de subjective_context (declarations). Un statut unavailable ne prouve
+pas l'absence d'activites. Voir plusieurs sports ne prouve pas qu'un generateur
+de plans ou un format Garmin les prend en charge.
 
 Tu peux enquêter avant de recommander. Si une information importante manque ou
 reste ambiguë, réponds naturellement, pose UNE question courte et utile,
@@ -437,6 +470,39 @@ def _validate_conversation_output(
 def generate_response(
     request: dict[str, Any], settings: Settings, context: dict[str, Any]
 ) -> CoachResponse:
+    reference = (context.get("contexte_multisport") or {}).get("reference_date")
+    history_text = str(request.get("content") or "")
+    # Recover only a contiguous chain of our explicit historical clarifications.
+    recent = context.get("conversation_recente") or []
+    prior = [item for item in recent if isinstance(item, dict)]
+    if prior and prior[-1].get("role") == "user" and prior[-1].get("content") == history_text:
+        prior = prior[:-1]
+    clarification_messages = {
+        "Quelle période souhaites-tu analyser ? Précise les mois et l’année, ou les dates.",
+        "Pour quel sport souhaites-tu retrouver cette sortie longue ?",
+        "Quel sport souhaites-tu analyser ?",
+        "De quelle année parles-tu pour cette période historique ?",
+        UNSUPPORTED_SPORT_CLARIFICATION,
+    }
+    while len(prior) >= 2 and prior[-1].get("role") == "assistant" and prior[-1].get("content") in clarification_messages and prior[-2].get("role") == "user":
+        if prior[-1].get("content") == "De quelle année parles-tu pour cette période historique ?" and not re.fullmatch(r"\s*(?:en\s+)?((?:19|20)\d{2})\s*[.!]?\s*", str(request.get("content") or "")):
+            break
+        earlier_text = str(prior[-2].get("content") or "")
+        if prior[-1].get("content") in ("Quel sport souhaites-tu analyser ?", UNSUPPORTED_SPORT_CLARIFICATION):
+            # Replace an ambiguous discipline selection, preserving only its dates/intent.
+            earlier_text = ''.join(c for c in unicodedata.normalize('NFKD', earlier_text.lower()) if not unicodedata.combining(c))
+            for sport_pattern, _ in SPORT_PATTERNS:
+                earlier_text = re.sub(sport_pattern, '', earlier_text)
+            earlier_text = re.sub(UNSUPPORTED_SPORT_PATTERN, '', earlier_text)
+        history_text = earlier_text + " " + history_text
+        prior = prior[:-2]
+    history_query = parse_history_request(history_text, reference) if reference else {"status": "not_requested"}
+    if history_query["status"] == "needs_clarification":
+        return CoachResponse(message=history_query["message"], conversation_state="needs_clarification", clarification_topic="historical_period")
+    if history_query["status"] == "requested":
+        athlete = current_user_id()
+        context = dict(context)
+        context["recherche_historique"] = search_conversation_history(athlete, history_query) if athlete else {"status": "unavailable", "error_code": "missing_active_user"}
     mode = str(request.get("coach_mode") or "balanced")
     mode_settings = {
         "essential": (280, "Réponds de façon très concise, avec uniquement la recommandation prioritaire."),
@@ -459,7 +525,12 @@ def generate_response(
             "automatiques est désactivé."
         )
     try:
-        payload = {"demande": request["content"], "contexte": context}
+        model_context = dict(context)
+        multi = context.get("contexte_multisport") or {}
+        if multi.get("status") == "available" and multi.get("history"):
+            model_context.pop("courses_recentes", None)
+            model_context.pop("trace_sportive", None)
+        payload = {"demande": request["content"], "contexte": model_context}
         encoded_payload = json.dumps(
             payload, ensure_ascii=False, separators=(",", ":")
         )
@@ -472,7 +543,7 @@ def generate_response(
             result = client.responses.parse(
                 model=model,
                 reasoning={"effort": "none"},
-                instructions=COACH_CHAT_INSTRUCTIONS + "\n\n" + mode_instruction,
+                instructions=COACH_CHAT_INSTRUCTIONS + "\n\n" + HISTORY_SEARCH_INSTRUCTIONS + "\n\n" + mode_instruction,
                 input=encoded_payload,
                 text_format=CoachResponse,
                 max_output_tokens=output_budget,
@@ -489,7 +560,7 @@ def generate_response(
             return _validate_conversation_output(response, request, context)
         response = structured_completion(
             settings,
-            instructions=COACH_CHAT_INSTRUCTIONS + "\n\n" + mode_instruction,
+            instructions=COACH_CHAT_INSTRUCTIONS + "\n\n" + HISTORY_SEARCH_INSTRUCTIONS + "\n\n" + mode_instruction,
             payload=payload,
             result_type=CoachResponse,
             reasoning_effort="none",
