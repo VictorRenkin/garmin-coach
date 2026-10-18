@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from .ai_provider import routed_openai_model, structured_completion
 from .ai_usage import record_usage
+from .coach_numeric_presentation import build_numeric_presentation
 from .athlete_memory import MemoryUpdate, apply_memory_updates
 from .config import DATA_DIR, Settings, ensure_directories, current_user_id
 from .conversation_history_search import parse_history_request, search_conversation_history, SPORT_PATTERNS, UNSUPPORTED_SPORT_PATTERN, UNSUPPORTED_SPORT_CLARIFICATION
@@ -137,6 +138,20 @@ activite enregistree. Si activity_list_complete est false, la liste est partiell
 utilise summary pour les totaux complets et indique la limite si pertinente.
 Pour les totaux hebdomadaires, cite weeks.*.summary plutot que de recalculer
 depuis la liste. Les durees sont en secondes : 3600 secondes = une heure.
+presentation_numerique fournit des conversions deterministes des syntheses
+identifiees par leur chemin. Pour ces syntheses, reprends observed_duration_hms
+et average_weekly_observed_duration_hms tels quels au lieu de convertir les
+secondes mentalement. Les libelles h/min/s sont arrondis a la seconde ; les
+secondes sources restent la reference. La moyenne hebdomadaire est normalisee
+sur tous les jours calendaires inclus (period_days / 7), pas sur les seules
+semaines actives : compare ces moyennes pour des periodes de longueurs differentes.
+Une conversion null reste manquante. Une duree observee partielle ne devient
+pas un volume reel complet grace au formatage ; conserve les limites de couverture.
+Les distances observed_distance_by_sport_km restent propres a chaque discipline.
+Ne les additionne pas dans un total multisport et ne remplace pas leurs valeurs
+individuelles par une somme. Pour comparer un volume transversal, privilegie les
+durees observees, en precisant que ce volume temporel n'est pas une mesure de
+charge physiologique ni de fatigue. N'invente aucune charge si elle est absente.
 Une tendance indisponible sur 28 jours ne contredit pas une comparaison factuelle
 des deux semaines; distingue ces deux comparaisons.
 courses_recentes et trace_sportive, lorsqu'elles existent, sont des vues legacy
@@ -556,6 +571,9 @@ def generate_response(
         if multi.get("status") == "available" and multi.get("history"):
             model_context.pop("courses_recentes", None)
             model_context.pop("trace_sportive", None)
+        numeric = build_numeric_presentation(model_context)
+        if numeric:
+            model_context["presentation_numerique"] = numeric
         payload = {"demande": request["content"], "contexte": model_context}
         encoded_payload = json.dumps(
             payload, ensure_ascii=False, separators=(",", ":")
