@@ -5,8 +5,9 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
+from .session_limits import MAX_SESSION_MINUTES, MAX_SESSION_DISTANCE_KM, MAX_BLOCK_REPETITIONS, MAX_EFFORT_MINUTES
 from .ai_provider import structured_completion
 from .ai_analysis import MissingOpenAIKeyError, _sanitized_metrics, load_analysis
 from .config import PLANS_DIR, PROFILE_FILE, Settings, ensure_directories
@@ -30,19 +31,30 @@ class PlannedSession(BaseModel):
     echauffement: str = Field(min_length=3, max_length=200)
     bloc_principal: str = Field(min_length=5, max_length=400)
     retour_au_calme: str = Field(min_length=3, max_length=200)
-    duree_estimee_minutes: int = Field(ge=15, le=150)
-    distance_estimee_km: float = Field(ge=2, le=25)
+    duree_estimee_minutes: int = Field(ge=15, le=MAX_SESSION_MINUTES)
+    distance_estimee_km: float = Field(ge=2, le=MAX_SESSION_DISTANCE_KM)
     consigne_intensite: str = Field(min_length=5, max_length=250)
     echauffement_minutes: int = Field(ge=3, le=25)
-    repetitions_bloc: int = Field(ge=1, le=12)
-    effort_minutes: int = Field(ge=1, le=100)
-    recuperation_minutes: int = Field(ge=0, le=15)
+    repetitions_bloc: int = Field(ge=1, le=MAX_BLOCK_REPETITIONS)
+    effort_minutes: int = Field(ge=1, le=MAX_EFFORT_MINUTES)
+    recuperation_minutes: float = Field(ge=0, le=15)
     retour_au_calme_minutes: int = Field(ge=3, le=25)
     echauffement_zone_fc: int = Field(default=1, ge=1, le=5)
     echauffement_zone_fc_fin: int | None = Field(default=None, ge=1, le=5)
     bloc_zone_fc: int = Field(default=2, ge=1, le=5)
     recuperation_zone_fc: int = Field(default=1, ge=1, le=5)
     retour_au_calme_zone_fc: int = Field(default=1, ge=1, le=5)
+
+
+    @model_validator(mode="after")
+    def validate_execution_ceiling(self) -> "PlannedSession":
+        # A larger repetition ceiling must not bypass the total duration ceiling.
+        total = (self.echauffement_minutes
+                 + self.repetitions_bloc * (self.effort_minutes + self.recuperation_minutes)
+                 + self.retour_au_calme_minutes)
+        if total > MAX_SESSION_MINUTES:
+            raise ValueError("La durée des blocs dépasse le plafond de la séance.")
+        return self
 
 
 class WeeklyReview(BaseModel):
@@ -77,6 +89,10 @@ Analyse l'historique et les entraînements Garmin existants avant de proposer la
 progression. S'il existe une logique cohérente, conserve ses principes utiles ;
 sinon repars prudemment de l'historique réel. Chaque séance doit respecter le
 schéma Garmin, rester progressive et être justifiée par l'objectif confirmé.
+Les durées sont en minutes : recuperation_minutes peut valoir 0.5 (30 secondes),
+0.75 (45 secondes) ou 1.5 (90 secondes), sans arrondi à une minute entière.
+Un seul bloc homogène répété est représentable, pas plusieurs blocs distincts
+ou imbriqués. Les plafonds du schéma ne sont pas une cible de charge.
 Tiens compte des jours disponibles, des contraintes, des préférences et des
 autres sports réellement observés. Une séance de natation ou de vélo peut
 contribuer à la charge et à la récupération, mais ne remplace pas automatiquement
@@ -107,6 +123,10 @@ Règles :
 - Respecte les jours disponibles et les contraintes déclarées dans le profil.
   Tiens compte de la natation, du vélo, du renforcement et des autres sports
   observés dans la charge globale sans les convertir arbitrairement en course.
+- Les champs de durée sont en minutes. recuperation_minutes accepte les fractions :
+  0.5 = 30 secondes, 0.75 = 45 secondes, 1.5 = 90 secondes, sans arrondi entier.
+  Un seul bloc homogène répété est représentable, pas plusieurs blocs distincts.
+  Les plafonds du schéma ne sont jamais des recommandations de charge.
 - Les champs numériques décrivent la séance Garmin : échauffement, répétitions
   du bloc, minutes d'effort par répétition, récupération entre répétitions et
   retour au calme. Pour une endurance continue, utilise une seule répétition et

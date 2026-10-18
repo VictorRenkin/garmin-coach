@@ -25,6 +25,7 @@ from pydantic import (
     model_validator,
 )
 
+from .session_limits import MAX_SESSION_MINUTES, MAX_SESSION_DISTANCE_KM, MAX_BLOCK_REPETITIONS, MAX_EFFORT_MINUTES
 from . import ai_provider
 from .athlete_memory import decision_memory_context
 from .config import (
@@ -134,8 +135,8 @@ def _normalized(value: str, maximum: int) -> str:
 class PlanSessionStructureV2(StrictContract):
     warmup_minutes: int | None = Field(default=None, ge=0, le=120)
     main_set: str = Field(min_length=1, max_length=600)
-    repetitions: int | None = Field(default=None, ge=1, le=100)
-    effort_minutes: float | None = Field(default=None, gt=0, le=360)
+    repetitions: int | None = Field(default=None, ge=1, le=MAX_BLOCK_REPETITIONS)
+    effort_minutes: float | None = Field(default=None, gt=0, le=MAX_EFFORT_MINUTES)
     recovery_minutes: float | None = Field(default=None, ge=0, le=120)
     cooldown_minutes: int | None = Field(default=None, ge=0, le=120)
 
@@ -150,8 +151,8 @@ class PlanSessionV2(StrictContract):
     sport: Literal["running", "cycling", "swimming", "strength", "cross_training", "other"]
     session_type: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
     objective: str = Field(min_length=1, max_length=240)
-    duration_minutes: int = Field(gt=0, le=480)
-    distance_km: float | None = Field(default=None, gt=0, le=500)
+    duration_minutes: int = Field(gt=0, le=MAX_SESSION_MINUTES)
+    distance_km: float | None = Field(default=None, gt=0, le=MAX_SESSION_DISTANCE_KM)
     intensity_instruction: str = Field(min_length=1, max_length=400)
     structure: PlanSessionStructureV2
     explanation: str = Field(min_length=1, max_length=500)

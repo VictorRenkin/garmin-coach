@@ -13,6 +13,7 @@ from typing import Any, Literal
 from openai import OpenAI
 from pydantic import BaseModel, Field, model_validator
 
+from .session_limits import MAX_SESSION_MINUTES, MAX_SESSION_DISTANCE_KM, MAX_BLOCK_REPETITIONS, MAX_EFFORT_MINUTES
 from .ai_provider import routed_openai_model, structured_completion
 from .ai_usage import record_usage
 from .athlete_memory import MemoryUpdate, apply_memory_updates
@@ -57,13 +58,13 @@ class SessionPatch(BaseModel):
     echauffement: str | None = Field(default=None, min_length=3, max_length=200)
     bloc_principal: str | None = Field(default=None, min_length=5, max_length=400)
     retour_au_calme: str | None = Field(default=None, min_length=3, max_length=200)
-    duree_estimee_minutes: int | None = Field(default=None, ge=15, le=150)
-    distance_estimee_km: float | None = Field(default=None, ge=2, le=25)
+    duree_estimee_minutes: int | None = Field(default=None, ge=15, le=MAX_SESSION_MINUTES)
+    distance_estimee_km: float | None = Field(default=None, ge=2, le=MAX_SESSION_DISTANCE_KM)
     consigne_intensite: str | None = Field(default=None, min_length=5, max_length=250)
     echauffement_minutes: int | None = Field(default=None, ge=3, le=25)
-    repetitions_bloc: int | None = Field(default=None, ge=1, le=12)
-    effort_minutes: int | None = Field(default=None, ge=1, le=100)
-    recuperation_minutes: int | None = Field(default=None, ge=0, le=15)
+    repetitions_bloc: int | None = Field(default=None, ge=1, le=MAX_BLOCK_REPETITIONS)
+    effort_minutes: int | None = Field(default=None, ge=1, le=MAX_EFFORT_MINUTES)
+    recuperation_minutes: float | None = Field(default=None, ge=0, le=15)
     retour_au_calme_minutes: int | None = Field(default=None, ge=3, le=25)
     echauffement_zone_fc: int | None = Field(default=None, ge=1, le=5)
     echauffement_zone_fc_fin: int | None = Field(default=None, ge=1, le=5)
@@ -79,7 +80,7 @@ class CoachResponse(BaseModel):
     action: Literal["none", "update_objective", "continue_existing_plan", "create_plan", "reschedule_session", "modify_session", "delete_sessions", "adapt_plan"] = "none"
     plan_adjustment: Literal["lighter", "progressive", "recovery"] | None = None
     objective_update: ObjectiveUpdate | None = None
-    session_index: int | None = Field(default=None, ge=0)
+    session_index: int | None = Field(default=None, ge=0, description="Indice base zéro dans plan_actif.seances : séance 1 = indice 0.")
     session_indexes: list[int] = Field(default_factory=list, max_length=7)
     new_date: str | None = None
     session_patch: SessionPatch | None = None
@@ -221,6 +222,16 @@ toujours confirmée dans l'application :
   session_indexes. Si l'utilisateur dit de ne garder qu'une séance clairement
   identifiable, inclus tous les autres index. Le bouton demandera sa confirmation ;
 - none dans tous les autres cas, notamment si une précision est nécessaire.
+Les indices session_index et session_indexes sont en base zéro dans plan_actif.seances :
+la séance 1 affichée correspond à l’indice 0, la séance 2 à l’indice 1.
+Les durées numériques des séances sont en minutes. recuperation_minutes accepte
+les fractions : 0.5 = 30 secondes, 0.75 = 45 secondes, 1.5 = 90 secondes.
+Conserve exactement la récupération demandée, sans arrondir à une minute entière.
+Le contrat exécutable représente un seul bloc homogène répété, encadré par
+échauffement et retour au calme. Il ne représente pas plusieurs blocs distincts
+ou imbriqués : explique cette limite et retourne action=none pour une telle
+création, sans remplacer silencieusement la séance par un bloc simplifié.
+Les plafonds du schéma ne sont jamais des recommandations de charge.
 Ton périmètre de modification est strictement limité aux champs de l'objectif et
 aux séances structurées prévues par ces actions. Tu ne peux jamais modifier la
 connexion Garmin, les clés API, le fournisseur d'IA, le code, les routes, les

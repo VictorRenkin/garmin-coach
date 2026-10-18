@@ -67,7 +67,7 @@ def build_running_workout(session: PlannedSession) -> RunningWorkout:
     ) * 60
     return RunningWorkout(
         workoutName=_garmin_name(session),
-        estimatedDurationInSecs=estimated_seconds,
+        estimatedDurationInSecs=round(estimated_seconds),
         workoutSegments=[
             WorkoutSegment(
                 segmentOrder=1, sportType=RUNNING_SPORT, workoutSteps=steps
