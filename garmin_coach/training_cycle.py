@@ -8,6 +8,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, model_validator
 
 from .session_limits import MAX_SESSION_MINUTES, MAX_SESSION_DISTANCE_KM, MAX_BLOCK_REPETITIONS, MAX_EFFORT_MINUTES
+from .session_blocks import SessionBlock, validate_blocks_duration
 from .ai_provider import structured_completion
 from .ai_analysis import MissingOpenAIKeyError, _sanitized_metrics, load_analysis
 from .config import PLANS_DIR, PROFILE_FILE, Settings, ensure_directories
@@ -35,9 +36,10 @@ class PlannedSession(BaseModel):
     distance_estimee_km: float = Field(ge=2, le=MAX_SESSION_DISTANCE_KM)
     consigne_intensite: str = Field(min_length=5, max_length=250)
     echauffement_minutes: int = Field(ge=3, le=25)
-    repetitions_bloc: int = Field(ge=1, le=MAX_BLOCK_REPETITIONS)
-    effort_minutes: int = Field(ge=1, le=MAX_EFFORT_MINUTES)
-    recuperation_minutes: float = Field(ge=0, le=15)
+    repetitions_bloc: int | None = Field(default=None, ge=1, le=MAX_BLOCK_REPETITIONS)
+    effort_minutes: int | None = Field(default=None, ge=1, le=MAX_EFFORT_MINUTES)
+    recuperation_minutes: float | None = Field(default=None, ge=0, le=15)
+    blocks: list[SessionBlock] | None = Field(default=None, min_length=1, max_length=MAX_BLOCK_REPETITIONS)
     retour_au_calme_minutes: int = Field(ge=3, le=25)
     echauffement_zone_fc: int = Field(default=1, ge=1, le=5)
     echauffement_zone_fc_fin: int | None = Field(default=None, ge=1, le=5)
@@ -48,6 +50,15 @@ class PlannedSession(BaseModel):
 
     @model_validator(mode="after")
     def validate_execution_ceiling(self) -> "PlannedSession":
+        homogeneous = (self.repetitions_bloc, self.effort_minutes, self.recuperation_minutes)
+        if self.blocks is not None:
+            if any(value is not None for value in homogeneous):
+                raise ValueError("Les blocs distincts et les champs du bloc homogène sont exclusifs.")
+            validate_blocks_duration(self.blocks, self.echauffement_minutes,
+                                     self.retour_au_calme_minutes, self.duree_estimee_minutes)
+            return self
+        if any(value is None for value in homogeneous):
+            raise ValueError("Les trois champs du bloc homogène sont requis sans blocs distincts.")
         # A larger repetition ceiling must not bypass the total duration ceiling.
         total = (self.echauffement_minutes
                  + self.repetitions_bloc * (self.effort_minutes + self.recuperation_minutes)
@@ -91,8 +102,12 @@ sinon repars prudemment de l'historique réel. Chaque séance doit respecter le
 schéma Garmin, rester progressive et être justifiée par l'objectif confirmé.
 Les durées sont en minutes : recuperation_minutes peut valoir 0.5 (30 secondes),
 0.75 (45 secondes) ou 1.5 (90 secondes), sans arrondi à une minute entière.
-Un seul bloc homogène répété est représentable, pas plusieurs blocs distincts
-ou imbriqués. Les plafonds du schéma ne sont pas une cible de charge.
+Un bloc homogène utilise repetitions_bloc, effort_minutes et recuperation_minutes.
+Plusieurs blocs distincts utilisent blocks et ces trois champs deviennent null.
+Chaque bloc précise effort_minutes, repetitions, recovery_minutes et une consigne
+intensity_instruction ; aucune imbrication. La récupération suit chaque effort,
+y compris le dernier. La somme des phases doit correspondre à la durée annoncée
+arrondie à la minute. Les plafonds du schéma ne sont pas une cible de charge.
 Tiens compte des jours disponibles, des contraintes, des préférences et des
 autres sports réellement observés. Une séance de natation ou de vélo peut
 contribuer à la charge et à la récupération, mais ne remplace pas automatiquement
@@ -125,7 +140,10 @@ Règles :
   observés dans la charge globale sans les convertir arbitrairement en course.
 - Les champs de durée sont en minutes. recuperation_minutes accepte les fractions :
   0.5 = 30 secondes, 0.75 = 45 secondes, 1.5 = 90 secondes, sans arrondi entier.
-  Un seul bloc homogène répété est représentable, pas plusieurs blocs distincts.
+  Pour plusieurs blocs distincts utilise blocks, et mets repetitions_bloc,
+  effort_minutes et recuperation_minutes à null. Pas de blocs imbriqués.
+  La récupération suit chaque effort, y compris le dernier ; la durée annoncée
+  est la somme des phases arrondie à la minute.
   Les plafonds du schéma ne sont jamais des recommandations de charge.
 - Les champs numériques décrivent la séance Garmin : échauffement, répétitions
   du bloc, minutes d'effort par répétition, récupération entre répétitions et

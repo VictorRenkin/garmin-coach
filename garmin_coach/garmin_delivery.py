@@ -27,6 +27,8 @@ from garminconnect.workout import (
 
 from .config import GARMIN_DELIVERY_FILE, ensure_directories, user_context
 from .garmin_workouts import RUNNING_SPORT, _calendar_entries
+from .session_blocks import validate_blocks_duration
+from .structured_workouts import build_block_steps
 from .plan_acceptance import get_plan_acceptance_state
 from .plan_proposal import (
     PlanProposalStateV2,
@@ -118,6 +120,22 @@ def build_plan_session_workout(session: PlanSessionV2) -> RunningWorkout:
     structure = session.structure
     warmup_seconds = int((structure.warmup_minutes or 0) * 60)
     cooldown_seconds = int((structure.cooldown_minutes or 0) * 60)
+    if structure.blocks is not None:
+        # Revalidate at the conversion boundary as well (model_copy is not validating).
+        session = PlanSessionV2.model_validate(session.model_dump())
+        structure = session.structure
+        warmup_seconds = int((structure.warmup_minutes or 0) * 60)
+        cooldown_seconds = int((structure.cooldown_minutes or 0) * 60)
+        structured_seconds = validate_blocks_duration(structure.blocks, structure.warmup_minutes or 0,
+                                                       structure.cooldown_minutes or 0, session.duration_minutes)
+        steps: list[Any] = []
+        if warmup_seconds:
+            steps.append(create_warmup_step(warmup_seconds, step_order=1))
+        steps.extend(build_block_steps(structure.blocks, len(steps) + 1))
+        if cooldown_seconds:
+            steps.append(create_cooldown_step(cooldown_seconds, step_order=len(steps) + 1))
+        return RunningWorkout(workoutName=_workout_name(session), estimatedDurationInSecs=structured_seconds,
+                              workoutSegments=[WorkoutSegment(segmentOrder=1, sportType=RUNNING_SPORT, workoutSteps=steps)])
     repetitions = structure.repetitions or 1
     recovery_seconds = int((structure.recovery_minutes or 0) * 60)
     if structure.effort_minutes is not None:
@@ -152,6 +170,9 @@ def build_plan_session_workout(session: PlanSessionV2) -> RunningWorkout:
         steps.append(create_repeat_group(repetitions, repeated, step_order=order))
     else:
         steps.append(create_interval_step(effort_seconds, step_order=order))
+        if recovery_seconds:
+            order += 1
+            steps.append(create_recovery_step(recovery_seconds, step_order=order))
     order += 1
     if cooldown_seconds:
         steps.append(create_cooldown_step(cooldown_seconds, step_order=order))

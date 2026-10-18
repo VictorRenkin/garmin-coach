@@ -16,6 +16,8 @@ from garminconnect.workout import (
 )
 
 from .training_cycle import PlannedSession
+from .session_blocks import validate_blocks_duration
+from .structured_workouts import build_block_steps
 
 
 RUNNING_SPORT = {"sportTypeId": 1, "sportTypeKey": "running", "displayOrder": 1}
@@ -126,6 +128,23 @@ def _with_hr_zone(step: Any, zone: int) -> Any:
 
 def build_running_workout(session: PlannedSession) -> RunningWorkout:
     """Construit toutes les phases avec les zones cardiaques Garmin."""
+    if session.blocks is not None:
+        session = PlannedSession.model_validate(session.model_dump())
+        structured_seconds = validate_blocks_duration(session.blocks, session.echauffement_minutes,
+                                                       session.retour_au_calme_minutes, session.duree_estimee_minutes)
+        # Keep the established progressive warmup and its explicitly supplied zones.
+        steps: list[Any] = []
+        end_zone = session.echauffement_zone_fc_fin
+        if end_zone and end_zone != session.echauffement_zone_fc:
+            first = session.echauffement_minutes // 2
+            steps.append(_with_hr_zone(create_warmup_step(first * 60, step_order=1), session.echauffement_zone_fc))
+            steps.append(_with_hr_zone(create_warmup_step((session.echauffement_minutes - first) * 60, step_order=2), end_zone))
+        else:
+            steps.append(_with_hr_zone(create_warmup_step(session.echauffement_minutes * 60, step_order=1), session.echauffement_zone_fc))
+        steps.extend(build_block_steps(session.blocks, len(steps) + 1))
+        steps.append(_with_hr_zone(create_cooldown_step(session.retour_au_calme_minutes * 60, step_order=len(steps) + 1), session.retour_au_calme_zone_fc))
+        return RunningWorkout(workoutName=_garmin_name(session), estimatedDurationInSecs=structured_seconds,
+                              workoutSegments=[WorkoutSegment(segmentOrder=1, sportType=RUNNING_SPORT, workoutSteps=steps)])
     warmup_end_zone = session.echauffement_zone_fc_fin
     if warmup_end_zone and warmup_end_zone != session.echauffement_zone_fc:
         first_minutes = session.echauffement_minutes // 2
@@ -178,6 +197,10 @@ def build_running_workout(session: PlannedSession) -> RunningWorkout:
                 session.bloc_zone_fc,
             )
         )
+        if session.recuperation_minutes > 0:
+            main_order += 1
+            steps.append(_with_hr_zone(create_recovery_step(session.recuperation_minutes * 60, step_order=main_order),
+                                       session.recuperation_zone_fc))
     steps.append(
         _with_hr_zone(
             create_cooldown_step(

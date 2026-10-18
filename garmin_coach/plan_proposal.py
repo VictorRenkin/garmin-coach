@@ -26,6 +26,7 @@ from pydantic import (
 )
 
 from .session_limits import MAX_SESSION_MINUTES, MAX_SESSION_DISTANCE_KM, MAX_BLOCK_REPETITIONS, MAX_EFFORT_MINUTES
+from .session_blocks import SessionBlock, validate_blocks_duration
 from . import ai_provider
 from .athlete_memory import decision_memory_context
 from .config import (
@@ -62,6 +63,17 @@ N'invente aucune donnée personnelle, zone cardiaque, blessure, récupération o
 Si les zones cardiaques ne sont pas fiables, exprime l'intensité qualitativement (aisance respiratoire, effort perçu).
 La distance est optionnelle. N'ajoute pas de pseudo-précision si les faits sont limités.
 Chaque séance doit avoir une structure concrète et interprétable pour une future conversion, sans publication Garmin.
+Pour plusieurs blocs distincts, utilise structure.blocks dans leur ordre d'exécution ;
+repetitions, effort_minutes et recovery_minutes de structure doivent alors être null.
+Chaque bloc précise effort_minutes, repetitions, recovery_minutes et intensity_instruction.
+La récupération est exécutée après chaque effort, y compris le dernier. Les fractions
+0.5, 0.75 et 1.5 minute correspondent exactement à 30, 45 et 90 secondes.
+La durée totale est échauffement + somme des répétitions × (effort + récupération)
++ retour au calme ; duration_minutes en est l'arrondi à la minute. Le cumul des
+répétitions de tous les blocs ne dépasse pas 100, la séance ne dépasse pas 480 minutes.
+N'invente aucune zone FC ; sans cible explicitement fondée, les consignes restent qualitatives.
+Les blocs imbriqués, cibles en distance ou allure numérique ne sont pas représentables :
+ne les remplace pas silencieusement par un bloc homogène ou une autre cible.
 Une gêne légère est un contexte d'adaptation, pas une interdiction automatique. Une contrainte medical_no_running interdit la course.
 Le résumé, la stratégie, les objectifs et les explications sont destinés à l'utilisateur : n'y affiche jamais
 un path, un code de limitation ou du jargon interne. Décris les périodes concrètement, par exemple
@@ -139,6 +151,13 @@ class PlanSessionStructureV2(StrictContract):
     effort_minutes: float | None = Field(default=None, gt=0, le=MAX_EFFORT_MINUTES)
     recovery_minutes: float | None = Field(default=None, ge=0, le=120)
     cooldown_minutes: int | None = Field(default=None, ge=0, le=120)
+    blocks: list[SessionBlock] | None = Field(default=None, min_length=1, max_length=MAX_BLOCK_REPETITIONS)
+
+    @model_validator(mode="after")
+    def exclusive_structure(self) -> "PlanSessionStructureV2":
+        if self.blocks is not None and any(value is not None for value in (self.repetitions, self.effort_minutes, self.recovery_minutes)):
+            raise ValueError("Les blocs distincts et les champs du bloc homogène sont exclusifs.")
+        return self
 
     @field_validator("main_set")
     @classmethod
@@ -157,6 +176,15 @@ class PlanSessionV2(StrictContract):
     structure: PlanSessionStructureV2
     explanation: str = Field(min_length=1, max_length=500)
     limitations: list[str] = Field(default_factory=list, max_length=8)
+
+    @model_validator(mode="after")
+    def validate_complex_duration(self) -> "PlanSessionV2":
+        if self.structure.blocks is not None:
+            if self.sport != "running":
+                raise ValueError("Les blocs structurés distincts sont actuellement réservés à la course.")
+            validate_blocks_duration(self.structure.blocks, self.structure.warmup_minutes or 0,
+                                     self.structure.cooldown_minutes or 0, self.duration_minutes)
+        return self
 
     @field_validator("objective", "intensity_instruction", "explanation")
     @classmethod

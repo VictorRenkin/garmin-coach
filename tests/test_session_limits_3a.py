@@ -95,13 +95,13 @@ def test_invalid_values_still_rejected(field, value):
         assert SessionPatch(**{field:None}).model_dump(exclude_none=True) == {}
 
 
-def test_multiple_typed_blocks_are_explicitly_unsupported(tmp_path):
+def test_incomplete_typed_blocks_are_rejected_without_writing(tmp_path):
     with pytest.raises(ValidationError):
         PlanSessionStructureV2(main_set='Deux blocs distincts.', blocks=[{'repetitions': 4}, {'repetitions': 3}])
     target = tmp_path/'plan.json'
     original = json.dumps({'seances': [make_session().model_dump(mode='json')]})
     target.write_text(original)
-    with pytest.raises(ValueError, match='inconnu'):
+    with pytest.raises(ValidationError, match='effort_minutes'):
         dashboard.modify_planned_session(target, 0, {'blocks': [{'repetitions':4}, {'repetitions':3}]})
     assert target.read_text(encoding='utf-8') == original
 

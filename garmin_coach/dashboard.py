@@ -774,6 +774,16 @@ def modify_planned_session(
     if unknown:
         raise ValueError(f"Champ de séance inconnu : {sorted(unknown)[0]}")
     candidate = {**current, **patch, "date": current.get("date")}
+    homogeneous = {"repetitions_bloc", "effort_minutes", "recuperation_minutes"}
+    supplied = {key for key in homogeneous if patch.get(key) is not None}
+    if patch.get("blocks") is not None:
+        if supplied:
+            raise ValueError("Les blocs distincts et les champs du bloc homogène sont exclusifs.")
+        candidate.update({key: None for key in homogeneous})
+    elif current.get("blocks") is not None and supplied:
+        if supplied != homogeneous:
+            raise ValueError("Le remplacement des blocs nécessite les trois champs du bloc homogène.")
+        candidate["blocks"] = None
     validated = PlannedSession.model_validate(candidate).model_dump(mode="json")
     if isinstance(current.get("garmin"), dict):
         validated["garmin"] = current["garmin"]

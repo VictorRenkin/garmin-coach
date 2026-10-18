@@ -14,6 +14,7 @@ from openai import OpenAI
 from pydantic import BaseModel, Field, model_validator
 
 from .session_limits import MAX_SESSION_MINUTES, MAX_SESSION_DISTANCE_KM, MAX_BLOCK_REPETITIONS, MAX_EFFORT_MINUTES
+from .session_blocks import SessionBlock
 from .ai_provider import routed_openai_model, structured_completion
 from .ai_usage import record_usage
 from .athlete_memory import MemoryUpdate, apply_memory_updates
@@ -49,6 +50,7 @@ class ObjectiveUpdate(BaseModel):
 
 
 class SessionPatch(BaseModel):
+    blocks: list[SessionBlock] | None = Field(default=None, min_length=1, max_length=MAX_BLOCK_REPETITIONS)
     titre: str | None = Field(default=None, min_length=3, max_length=80)
     type: Literal[
         "endurance facile", "tempo", "intervalles", "sortie longue", "récupération"
@@ -227,10 +229,20 @@ la séance 1 affichée correspond à l’indice 0, la séance 2 à l’indice 1.
 Les durées numériques des séances sont en minutes. recuperation_minutes accepte
 les fractions : 0.5 = 30 secondes, 0.75 = 45 secondes, 1.5 = 90 secondes.
 Conserve exactement la récupération demandée, sans arrondir à une minute entière.
-Le contrat exécutable représente un seul bloc homogène répété, encadré par
-échauffement et retour au calme. Il ne représente pas plusieurs blocs distincts
-ou imbriqués : explique cette limite et retourne action=none pour une telle
-création, sans remplacer silencieusement la séance par un bloc simplifié.
+Pour plusieurs blocs distincts, utilise session_patch.blocks dans l'ordre demandé :
+chaque bloc précise effort_minutes, repetitions, recovery_minutes et intensity_instruction.
+Ne fournis alors ni repetitions_bloc, ni effort_minutes, ni recuperation_minutes
+au niveau du patch : le backend remplace explicitement l'ancien bloc homogène.
+La récupération suit chaque effort, y compris le dernier ; les durées sont
+représentables en secondes entières, et duree_estimee_minutes est la somme des
+phases arrondie à la minute. Le cumul des répétitions ne dépasse pas 100.
+Les zones effort_hr_zone/recovery_hr_zone sont optionnelles et jamais inventées.
+Sans cible numérique fiable, les consignes de chaque bloc restent qualitatives,
+affichées dans Motionest mais sans cible Garmin chiffrée garantie.
+Pour remplacer des blocs distincts par un bloc homogène, fournis les trois champs
+repetitions_bloc, effort_minutes et recuperation_minutes ensemble.
+Les blocs imbriqués, cibles en distance ou allure numérique ne sont pas représentables :
+explique cette limite et retourne action=none, sans simplification silencieuse.
 Les plafonds du schéma ne sont jamais des recommandations de charge.
 Ton périmètre de modification est strictement limité aux champs de l'objectif et
 aux séances structurées prévues par ces actions. Tu ne peux jamais modifier la
