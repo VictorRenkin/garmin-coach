@@ -67,13 +67,13 @@ def _get(url: str, cookie: str | None = None) -> tuple[int, dict]:
         return error.code, json.loads(error.read())
 
 
-def _post(url: str, payload: dict, cookie: str | None = None) -> tuple[int, dict, str]:
-    headers = {"Content-Type": "application/json"}
+def _post(url: str, payload: dict | None = None, cookie: str | None = None) -> tuple[int, dict, str]:
+    headers = {"Content-Type": "application/json"} if payload is not None else {}
     if cookie:
         headers["Cookie"] = cookie
     request = Request(
         url,
-        data=json.dumps(payload).encode(),
+        data=json.dumps(payload).encode() if payload is not None else None,
         headers=headers,
         method="POST",
     )
@@ -168,8 +168,10 @@ def test_signed_athlete_session_survives_process_memory_and_rejects_tampering() 
 def test_logout_endpoints_expire_only_the_expected_session_cookie() -> None:
     server, thread = _serve()
     try:
+        # Match the bodyless POST sent by both logout buttons. These endpoints
+        # do not consume JSON; closing with unread bytes can reset TCP on Windows.
         status, payload, athlete_cookie = _post(
-            f"http://127.0.0.1:{server.server_port}/api/logout", {}
+            f"http://127.0.0.1:{server.server_port}/api/logout"
         )
         assert status == 200
         assert payload["redirect"] == "/"
@@ -177,7 +179,7 @@ def test_logout_endpoints_expire_only_the_expected_session_cookie() -> None:
         assert "Max-Age=0" in athlete_cookie
 
         status, payload, manager_cookie = _post(
-            f"http://127.0.0.1:{server.server_port}/api/manager/logout", {}
+            f"http://127.0.0.1:{server.server_port}/api/manager/logout"
         )
         assert status == 200
         assert payload["redirect"] == "/"
