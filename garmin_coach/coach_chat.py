@@ -113,6 +113,19 @@ Garmin anonymisées, une synthèse de l'historique, une sélection de mémoire
 pertinente et au maximum huit échanges récents du même chat. N'invente aucune donnée,
 douleur, fatigue ou séance.
 
+Le champ contexte_multisport contient l'état canonique athlete_state et une
+synthèse training_history_summary des activités de toutes les disciplines.
+Utilise les sports, volumes observés, dates, provenance source et confiance par
+composant de ce champ ; courses_recentes et trace_sportive ne couvrent que la
+course et ne permettent pas de conclure à l'absence d'autres sports. Quand tu
+cites un volume multisport, indique la discipline, la période et sa provenance
+(historique local importé). Si status=unavailable, ce contexte est indisponible,
+pas un historique vide : explique cette limite sans inventer de métriques.
+Distingue confiance historique et niveau actuel, ainsi que mesures et ressenti.
+La lecture multisport ne signifie pas que le générateur sait exécuter un plan
+multisport : les actions structurées de séance restent des séances de course.
+Ne promets pas de créer ou d'envoyer un programme vélo, natation ou football.
+
 Tu peux enquêter avant de recommander. Si une information importante manque ou
 reste ambiguë, réponds naturellement, pose UNE question courte et utile,
 retourne conversation_state=needs_clarification, clarification_topic avec une
@@ -838,3 +851,4 @@ def save_response(request_id: str, source: Path) -> dict[str, Any]:
     except OSError as exc:
         raise ValueError("Réponse du coach introuvable.") from exc
     return store_response(request_id, response)
+
