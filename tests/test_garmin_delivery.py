@@ -112,8 +112,16 @@ def test_delivery_persists_ids_and_is_idempotent(
 ) -> None:
     accepted(monkeypatch, proposal_state())
     client = VerifiedClient()
+    now = ["2026-10-18T18:31:16+02:00"]
+    monkeypatch.setattr(module, "_now", lambda: now[0])
 
     first = publish_accepted_session("runner", client, session_index=0)
+    now[0] = "2026-10-18T18:31:17+02:00"
+
+    def unexpected_write(store):
+        pytest.fail("An unchanged delivery must not rewrite its persisted facts.")
+
+    monkeypatch.setattr(module, "_write_store", unexpected_write)
     second = publish_accepted_session("runner", client, session_index=0)
 
     assert first["motionest_status"] == "saved"
@@ -138,11 +146,60 @@ def test_uncertain_calendar_is_verified_without_duplicate_schedule(
         (workout_id, scheduled_date)
     )
 
+    now = ["2026-10-18T18:31:16+02:00"]
+    monkeypatch.setattr(module, "_now", lambda: now[0])
     first = publish_accepted_session("runner", client, session_index=0)
+    now[0] = "2026-10-18T18:31:17+02:00"
     second = publish_accepted_session("runner", client, session_index=0)
 
+    assert second == first
     assert first["calendar_status"] == "verification_pending"
     assert second["calendar_status"] == "verification_pending"
+    assert client.uploads == 1
+    assert client.schedules == [(701, "2099-10-13")]
+
+
+@pytest.mark.parametrize("change", ["pending_confirmed", "event_id_changed", "error_cleared", "confirmation_lost"])
+def test_delivery_timestamp_advances_only_when_verified_facts_change(
+    monkeypatch: pytest.MonkeyPatch, change: str,
+) -> None:
+    accepted(monkeypatch, proposal_state())
+    client = VerifiedClient()
+    now = ["2026-10-18T18:31:16+02:00"]
+    monkeypatch.setattr(module, "_now", lambda: now[0])
+    if change == "pending_confirmed":
+        client.schedule_workout = lambda workout_id, scheduled_date: client.schedules.append(
+            (workout_id, scheduled_date)
+        )
+    first = publish_accepted_session("runner", client, session_index=0)
+    if change == "pending_confirmed":
+        client.items.append({"id": 900, "itemType": "workout", "workoutId": 701, "date": "2099-10-13"})
+    elif change == "event_id_changed":
+        client.items[0]["id"] = 901
+    elif change == "error_cleared":
+        with config.user_context("runner"):
+            store = module._read_store()
+            record = next(iter(store["deliveries"].values()))
+            record["last_error"] = "Synthetic previous verification error"
+            module._write_store(store)
+    else:
+        client.items.clear()
+    now[0] = "2026-10-18T18:31:17+02:00"
+    second = publish_accepted_session("runner", client, session_index=0)
+
+    assert first["updated_at"] == "2026-10-18T18:31:16+02:00"
+    assert second["updated_at"] == now[0]
+    assert second["garmin_workout_id"] == 701
+    assert second["calendar_status"] == (
+        "verification_pending" if change == "confirmation_lost" else "scheduled"
+    )
+    if change != "confirmation_lost":
+        assert second["garmin_calendar_event_id"] == (901 if change == "event_id_changed" else 900)
+        assert second["last_error"] is None
+    with config.user_context("runner"):
+        stored = next(iter(module._read_store()["deliveries"].values()))
+    assert stored["updated_at"] == now[0]
+    assert stored["calendar_status"] == second["calendar_status"]
     assert client.uploads == 1
     assert client.schedules == [(701, "2099-10-13")]
 

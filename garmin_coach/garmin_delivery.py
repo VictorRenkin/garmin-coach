@@ -3,6 +3,7 @@
 Creating a workout, scheduling it in the calendar and syncing it to a watch are
 separate facts.  This module persists each confirmed fact and never claims a
 watch sync, which Garmin Connect does not expose reliably through this client.
+``updated_at`` tracks changes to persisted delivery facts, not unchanged checks.
 """
 from __future__ import annotations
 
@@ -279,26 +280,27 @@ def publish_accepted_session(
         if workout_id:
             event = _calendar_event(client, int(workout_id), target_date)
             if event is not None:
-                record.update(
-                    {
-                        "calendar_status": "scheduled",
-                        "calendar_event_id": event.get("id"),
-                        "last_error": None,
-                        "updated_at": _now(),
-                    }
-                )
-                store["deliveries"][key] = record
-                _write_store(store)
+                confirmed = {
+                    "calendar_status": "scheduled",
+                    "calendar_event_id": event.get("id"),
+                    "last_error": None,
+                }
+                if any(record.get(field) != value for field, value in confirmed.items()):
+                    record.update(confirmed)
+                    record["updated_at"] = _now()
+                    store["deliveries"][key] = record
+                    _write_store(store)
                 return _public_record(session, session_index, record)
             if record.get("schedule_requested_at"):
-                record.update(
-                    {
-                        "calendar_status": "verification_pending",
-                        "updated_at": _now(),
-                    }
-                )
-                store["deliveries"][key] = record
-                _write_store(store)
+                if record.get("calendar_status") != "verification_pending":
+                    record.update(
+                        {
+                            "calendar_status": "verification_pending",
+                            "updated_at": _now(),
+                        }
+                    )
+                    store["deliveries"][key] = record
+                    _write_store(store)
                 return _public_record(session, session_index, record)
         else:
             workout = build_plan_session_workout(session)
