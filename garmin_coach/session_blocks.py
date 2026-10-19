@@ -36,7 +36,7 @@ class SessionBlock(BaseModel):
     @field_validator("effort_minutes", "recovery_minutes")
     @classmethod
     def whole_seconds(cls, value: float) -> float:
-        if abs(value * 60 - round(value * 60)) > 1e-7:
+        if (value > 0 and round(value * 60) < 1) or abs(value * 60 - round(value * 60)) > 1e-7:
             raise ValueError("Les blocs doivent être représentables en secondes entières.")
         return value
 

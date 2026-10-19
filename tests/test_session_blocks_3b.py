@@ -61,7 +61,8 @@ def test_two_blocks_are_identical_in_both_existing_adapters(recovery):
 
 @pytest.mark.parametrize('bad', [dict(effort_minutes=-1), dict(recovery_minutes=-1),
     dict(effort_minutes=float('nan')),dict(recovery_minutes=float('inf')),
-    dict(effort_minutes=0.001),dict(blocks=[]),dict(pace_seconds_per_km=240)])
+    dict(effort_minutes=0.001),dict(effort_minutes=1e-10),dict(recovery_minutes=1e-10),
+    dict(blocks=[]),dict(pace_seconds_per_km=240)])
 def test_unrepresentable_blocks_are_refused(bad):
     with pytest.raises(ValidationError):
         SessionBlock.model_validate({**blocks()[0], **bad})
