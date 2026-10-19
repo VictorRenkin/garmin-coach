@@ -151,3 +151,50 @@ def test_generation_validation_acceptance_and_local_conversion(monkeypatch,tmp_p
     first=garmin_delivery.publish_accepted_session(user,client,session_index=0,scheduled_date=date(2099,10,13))
     assert garmin_delivery.publish_accepted_session(user,client,session_index=0,scheduled_date=date(2099,10,13))==first
     assert client.uploads==1 and len(client.schedules)==1
+
+
+def test_real_ai_validation_harness_runs_five_cases_offline(monkeypatch,tmp_path):
+    """Validate the paid-call harness itself with an entirely fake transport."""
+    import importlib.util
+    import sys
+    from pathlib import Path
+    from types import SimpleNamespace
+    from garmin_coach import coach_chat
+    spec=importlib.util.spec_from_file_location('validate_complex_sessions_3b',
+        Path(__file__).resolve().parents[1]/'scripts'/'validate_complex_sessions_3b.py')
+    harness=importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(harness)
+
+    class Responses:
+        def parse(self,**kwargs):
+            name=config.current_user_id().removeprefix('synthetic-')
+            expected=harness.CASES[name]
+            if name=='v2_two_blocks':
+                payload=json.loads(kwargs['input'])
+                generated=session().model_dump()
+                generated.update(date=payload['allowed_dates'][0],duration_minutes=29)
+                generated['structure']['blocks']=expected
+                output=plan_proposal.PlanProposalV2(period=payload['period'],summary='Semaine synthétique.',
+                    strategy='Deux blocs distincts.',sessions=[generated])
+            elif expected is None:
+                output=coach_chat.CoachResponse(message='Les blocs imbriqués ne sont pas représentables.',action='none')
+            else:
+                _,seconds=harness.requested_session(expected)
+                output=coach_chat.CoachResponse(message='Voici les blocs proposés.',action='modify_session',session_index=0,
+                    session_patch=SessionPatch(blocks=expected,duree_estimee_minutes=round(seconds/60),
+                                               echauffement_minutes=10,retour_au_calme_minutes=5))
+            return SimpleNamespace(output_parsed=output,usage=SimpleNamespace(input_tokens=100,output_tokens=50,total_tokens=150))
+
+    class Client:
+        def __init__(self,**kwargs):
+            self.responses=Responses()
+
+    report=tmp_path/'validation.json'
+    monkeypatch.setattr(coach_chat,'OpenAI',Client)
+    monkeypatch.setattr(config,'load_settings',settings)
+    monkeypatch.setattr(sys,'argv',['validate_complex_sessions_3b.py','--real','--output',str(report)])
+    harness.main()
+    result=json.loads(report.read_text(encoding='utf-8'))
+    assert result['api_attempts']==5
+    assert all(item['technical_success'] and item['functional_success'] for item in result['profiles'])
+    assert result['total_tokens']==750 and result['real_garmin_calls']==0
