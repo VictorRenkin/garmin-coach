@@ -49,6 +49,18 @@ class ObjectiveUpdate(BaseModel):
     race_date: str | None = None
 
 
+class CalendarRequest(BaseModel):
+    """Conversation intent only; never a calendar authorization or mutation."""
+    target_date: date | None = None
+    decision: Literal["needs_clarification", "not_appropriate", "blocked", "ready_for_proposal"]
+
+    @model_validator(mode="after")
+    def ready_date_is_explicit(self) -> "CalendarRequest":
+        if self.decision == "ready_for_proposal" and self.target_date is None:
+            raise ValueError("Une double journée proposée exige une date précise.")
+        return self
+
+
 class SessionPatch(BaseModel):
     blocks: list[SessionBlock] | None = Field(default=None, min_length=1, max_length=MAX_BLOCK_REPETITIONS)
     titre: str | None = Field(default=None, min_length=3, max_length=80)
@@ -76,6 +88,7 @@ class SessionPatch(BaseModel):
 
 
 class CoachResponse(BaseModel):
+    calendar_request: CalendarRequest | None = None
     message: str = Field(min_length=2, max_length=3000)
     source: Literal["ai", "openai", "local"] = "local"
     plan_modifie: bool = False
@@ -94,6 +107,8 @@ class CoachResponse(BaseModel):
 
     @model_validator(mode="after")
     def validate_action(self) -> "CoachResponse":
+        if self.calendar_request is not None and self.action != "none":
+            raise ValueError("Une demande de calendrier nécessite une proposition validée ; aucune action legacy automatique.")
         if self.action == "update_objective" and self.objective_update is None:
             raise ValueError("Une mise à jour d'objectif est requise.")
         if self.action == "reschedule_session" and (
@@ -121,6 +136,23 @@ class CoachResponse(BaseModel):
 
 
 COACH_CHAT_INSTRUCTIONS = """
+Pour une demande de double journée, distingue une discussion d'une autorisation.
+Retourne action=none et calendar_request avec target_date précise si connue :
+- needs_clarification si la date, les horaires, les jours autorisés, le repos minimal
+  ou le plafond quotidien déclarés manquent. Pose une question utile ; n'invente pas de bornes ;
+- not_appropriate pour un débutant, une reprise, une douleur affectant l'entraînement,
+  une interdiction canonique de course/entraînement ou une récupération insuffisamment documentée ;
+- blocked si calendrier_plan_v2.blocked_dates ou une programmation externe occupe la date ;
+  la première séance du même plan explicitement autorisé n'est pas un conflit externe,
+  mais un ancien plan local ou événement externe ne doit pas être effacé ;
+- ready_for_proposal uniquement si les contraintes explicites et les faits fournis
+  permettent de préparer la double journée, sans prétendre avoir créé ou publié quoi que ce soit.
+Les disponibilités canoniques sont dans declarations_v1.availability. La capacité
+reste sept séances par semaine et deux par date autorisée. Une borne de repos
+déclarée n'est pas une preuve médicale ou physiologique. Le moteur V2 revalide
+les horaires, le volume, les collisions et chaque accord individuel ensuite.
+Une demande ambiguë ne doit pas déplacer ou dupliquer une séance legacy. Aucune
+réponse du coach n'accepte une séance à la place du sportif.
 Le champ plan_actif est la source de verite actuelle. S'il contredit un ancien
 message, decris uniquement le plan_actif et explique que l'ancienne proposition
 n'est pas appliquee. Une discussion ou une confirmation textuelle ne prouve

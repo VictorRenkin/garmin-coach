@@ -118,6 +118,7 @@ from .plan_proposal import (
     get_plan_proposal_state,
     proposal_fingerprint,
     revise_plan_session,
+    local_calendar_blocked_dates,
 )
 from .plan_acceptance import (
     PlanAcceptanceError,
@@ -605,12 +606,22 @@ def coach_context() -> dict[str, Any]:
     canonical_inputs: dict[str, Any] | None = None
     journey: dict[str, Any] | None = None
     planning_decision: dict[str, Any] | None = None
+    calendar_context: dict[str, Any] = {"status": "unavailable"}
     if user_id:
         try:
             inputs = load_motionest_inputs_v1(user_id)
             canonical_inputs = inputs.model_dump(mode="json")
             journey = build_first_run_journey(user_id)
             planning_decision = journey.get("planning_decision")
+            proposal_payload = journey.get("plan_proposal") or {}
+            proposal = proposal_payload.get("proposal")
+            if proposal_payload.get("status") == "available" and isinstance(proposal, dict):
+                scheduled = proposal.get("sessions") or []
+                calendar_context = {"status": "available", "sessions": [
+                    {key: item.get(key) for key in ("session_id", "date", "starts_at", "duration_minutes")}
+                    for item in scheduled[:7] if isinstance(item, dict)],
+                    "blocked_dates": [day.isoformat() for day in local_calendar_blocked_dates(
+                        date.fromisoformat(proposal["period"]["start"]), date.fromisoformat(proposal["period"]["end"]))]}
         except Exception as exc:
             LOGGER.warning(
                 "Canonical coach context unavailable for %s (%s)",
@@ -624,6 +635,7 @@ def coach_context() -> dict[str, Any]:
         "etape_parcours": journey.get("stage") if journey else None,
         "decision_frequence": planning_decision,
         "plan_actif": plan,
+        "calendrier_plan_v2": calendar_context,
         "courses_recentes": [
             {key: value for key, value in activity.items() if key != "analysis"}
             for activity in activities

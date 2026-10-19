@@ -190,3 +190,40 @@ def test_later_global_withdrawal_revokes_unit_acceptance_until_explicit_unit_rea
     with pytest.raises(garmin_delivery.GarminDeliveryError):
         garmin_delivery.publish_accepted_session(user,client,session_index=1)
     assert client.uploads==1
+
+
+def test_calendar_ai_harness_is_bounded_and_validated_offline(monkeypatch,tmp_path):
+    import importlib.util
+    import sys
+    from pathlib import Path
+    from types import SimpleNamespace
+    from garmin_coach import coach_chat
+    spec=importlib.util.spec_from_file_location('calendar_harness',Path(__file__).resolve().parents[1]/'scripts'/'validate_calendar_3c.py')
+    harness=importlib.util.module_from_spec(spec);spec.loader.exec_module(harness)
+
+    class Responses:
+        def parse(self,**kwargs):
+            name=config.current_user_id().removeprefix('synthetic-')
+            if name=='v2_generation':
+                payload=json.loads(kwargs['input'])
+                output=double_proposal()
+                output.period=module.PlanPeriodV2.model_validate(payload['period'])
+            else:
+                output=coach_chat.CoachResponse(message='Réponse synthétique bornée.',action='none',
+                    calendar_request=coach_chat.CalendarRequest(decision=harness.CASES[name][0],
+                        target_date=None if name=='ambiguous' else date(2099,10,13)))
+            return SimpleNamespace(output_parsed=output,usage=SimpleNamespace(input_tokens=100,output_tokens=50,total_tokens=150))
+
+    class Client:
+        def __init__(self,**kwargs):
+            assert kwargs['max_retries']==0
+            self.responses=Responses()
+
+    report=tmp_path/'real-harness.json'
+    monkeypatch.setattr(coach_chat,'OpenAI',Client)
+    monkeypatch.setattr(config,'load_settings',settings)
+    monkeypatch.setattr(sys,'argv',['validate_calendar_3c.py','--real','--output',str(report)])
+    harness.main()
+    result=json.loads(report.read_text(encoding='utf-8'))
+    assert result['api_attempts']==5 and result['total_tokens']==750 and result['real_garmin_calls']==0
+    assert all(item['technical_success'] and item['functional_success'] for item in result['profiles'])

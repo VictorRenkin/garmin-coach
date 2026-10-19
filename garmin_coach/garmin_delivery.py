@@ -26,7 +26,7 @@ from garminconnect.workout import (
 )
 
 from .config import GARMIN_DELIVERY_FILE, ensure_directories, user_context
-from .garmin_workouts import RUNNING_SPORT, _calendar_entries, _walk_objects
+from .garmin_workouts import RUNNING_SPORT, _calendar_entries
 from .session_blocks import validate_blocks_duration
 from .structured_workouts import build_block_steps
 from .plan_acceptance import get_plan_acceptance_state
@@ -122,6 +122,11 @@ def _check_calendar_collisions(client: Any, target_date: date, session: PlanSess
             f"/calendar-service/year/{target_date.year}/month/{target_date.month - 1}")
         if not isinstance(payload, (dict, list)) or (isinstance(payload, dict) and not any(isinstance(payload.get(key), list) for key in ("calendarItems", "items", "calendarItemsList"))):
             raise ValueError("Unrecognized calendar response")
+        entries = payload if isinstance(payload, list) else next(payload[key] for key in ("calendarItems", "items", "calendarItemsList") if isinstance(payload.get(key), list))
+        for item in entries:
+            if not isinstance(item, dict) or item.get("itemType") not in {"workout", "activity"}:
+                raise ValueError("Unrecognized calendar entry")
+            date.fromisoformat(_item_date(item) or "")
     except Exception as exc:
         raise GarminDeliveryError("calendar_unavailable", "Le calendrier n'est pas vérifiable ; aucun envoi n'est effectué.") from exc
     allowed: set[int] = set()
@@ -131,9 +136,7 @@ def _check_calendar_collisions(client: Any, target_date: date, session: PlanSess
         if record.get("scheduled_date") == target_date.isoformat() and record.get("workout_id"):
             if candidate.session_id is None or get_plan_acceptance_state(user_id, proposal_state=proposal_state, session_id=candidate.session_id).status == "accepted":
                 allowed.add(int(record["workout_id"]))
-    for item in _walk_objects(payload):
-        if item.get("itemType") not in {"workout", "activity"}:
-            continue
+    for item in entries:
         day = _item_date(item)
         if day is None:
             raise GarminDeliveryError("calendar_unavailable", "Un événement sans date empêche de vérifier les collisions.")
