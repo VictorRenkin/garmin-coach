@@ -103,6 +103,17 @@ def test_invalid_conflicting_patch_never_writes(tmp_path):
     assert target.read_bytes()==before
 
 
+@pytest.mark.parametrize('adjustment',['lighter','progressive','recovery'])
+def test_global_adaptation_cannot_silently_corrupt_complex_blocks(tmp_path,adjustment):
+    target=tmp_path/'plan.json'
+    future=legacy().model_copy(update={'date':'2099-10-13'})
+    target.write_text(json.dumps({'seances':[future.model_dump(mode='json')]}),encoding='utf-8')
+    before=target.read_bytes()
+    with pytest.raises(ValueError,match='bloc par bloc'):
+        dashboard.adapt_plan(target,adjustment)
+    assert target.read_bytes()==before
+
+
 def test_single_iteration_recovery_is_executable_in_both_adapters():
     for original, builder in ((session(),garmin_delivery.build_plan_session_workout),
                               (legacy(),build_running_workout)):

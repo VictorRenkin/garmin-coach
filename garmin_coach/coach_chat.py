@@ -241,6 +241,9 @@ Sans cible numérique fiable, les consignes de chaque bloc restent qualitatives,
 affichées dans Motionest mais sans cible Garmin chiffrée garantie.
 Pour remplacer des blocs distincts par un bloc homogène, fournis les trois champs
 repetitions_bloc, effort_minutes et recuperation_minutes ensemble.
+L'action adapt_plan globale ne sait pas recalculer les blocs distincts : si le plan
+actif en contient dans ses séances futures, ne la propose pas. Explique la limite
+et demande une modification précise des blocs avant de proposer modify_session.
 Les blocs imbriqués, cibles en distance ou allure numérique ne sont pas représentables :
 explique cette limite et retourne action=none, sans simplification silencieuse.
 Les plafonds du schéma ne sont jamais des recommandations de charge.

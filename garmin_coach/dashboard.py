@@ -727,6 +727,9 @@ def adapt_plan(target: Path, adjustment: str) -> dict[str, Any]:
     factor = factors[adjustment]
     changed = 0
     today = date.today().isoformat()
+    if any(isinstance(session, dict) and session.get("blocks") is not None
+           and str(session.get("date") or "") >= today for session in sessions):
+        raise ValueError("L'adaptation globale ne représente pas les blocs distincts. Précise une modification de séance bloc par bloc.")
     for session in sessions:
         if not isinstance(session, dict) or str(session.get("date") or "") < today:
             continue
