@@ -219,6 +219,26 @@ class PlanConstraintsV1(StrictContract):
     long_session_preferred_days: list[Day]
     goal_intent: Literal["progress", "race", "beginner", "comeback"]
     source: Literal["user_confirmed"] = "user_confirmed"
+    double_session_days: list[Day] = Field(default_factory=list)
+    minimum_recovery_hours: float | None = Field(default=None, gt=0, le=168)
+    max_daily_duration_minutes: int | None = Field(default=None, gt=0, le=480)
+
+    @field_validator("minimum_recovery_hours", "max_daily_duration_minutes", mode="before")
+    @classmethod
+    def validate_numeric_calendar_bounds(cls, value, info):
+        from .availability import AvailabilityV1
+        return AvailabilityV1.numeric_calendar_bounds(value, info)
+
+    @model_validator(mode="after")
+    def validate_calendar_capacity(self) -> "PlanConstraintsV1":
+        # Reuse the same declaration validator; no independent calendar policy.
+        from .availability import AvailabilityV1
+        AvailabilityV1(available_days=self.available_days,
+            preferred_sessions_per_week=self.confirmed_sessions_per_week,
+            long_session_preferred_days=self.long_session_preferred_days,
+            double_session_days=self.double_session_days, minimum_recovery_hours=self.minimum_recovery_hours,
+            max_daily_duration_minutes=self.max_daily_duration_minutes)
+        return self
 
 
 class PlanningDecisionStateV1(StrictContract):
@@ -368,6 +388,8 @@ def build_planning_recommendation_input_v1(
         "goal.race_distance_km": race.distance_km,
         "goal.days_to_event": race.days_to_event,
         "availability.available_day_count": len(availability.available_days),
+        "availability.weekly_capacity": availability.weekly_capacity,
+        "availability.double_session_days": availability.double_session_days,
         "availability.preferred_sessions_per_week": availability.preferred_sessions_per_week,
         "availability.long_session_preferred_day_count": len(availability.long_session_preferred_days),
         "current_training.observed_sessions_per_week_28d": runtime.context.athlete_state.observed_sessions_per_week_last_28_days,
@@ -434,7 +456,7 @@ def validate_planning_recommendation(
     value: PlanningRecommendationV1,
     source: PlanningRecommendationInputV1,
 ) -> PlanningRecommendationV1:
-    available = source.facts["availability.available_day_count"]
+    available = source.facts.get("availability.weekly_capacity", source.facts["availability.available_day_count"])
     recommended = value.recommended_sessions_per_week
     declared_context = source.facts.get("conversation.active_declared_context", [])
     hard_constraint = any(
@@ -716,7 +738,7 @@ def build_plan_constraints_v1(
             "decision_stale",
             "La décision confirmée ne correspond plus aux déclarations actuelles.",
         )
-    if decision.confirmed_sessions_per_week > len(availability.available_days):
+    if decision.confirmed_sessions_per_week > availability.weekly_capacity:
         raise PlanningDecisionError(
             "decision_stale", "La fréquence confirmée dépasse la disponibilité actuelle."
         )
@@ -725,6 +747,9 @@ def build_plan_constraints_v1(
         available_days=availability.available_days,
         long_session_preferred_days=availability.long_session_preferred_days,
         goal_intent=goal.intent,
+        double_session_days=availability.double_session_days,
+        minimum_recovery_hours=availability.minimum_recovery_hours,
+        max_daily_duration_minutes=availability.max_daily_duration_minutes,
     )
 
 
@@ -808,7 +833,7 @@ def confirm_planning_decision(
             raise PlanningDecisionError(
                 "decision_invalid", "La fréquence confirmée doit être comprise entre 1 et 7."
             )
-        if confirmed_sessions_per_week > len(availability.available_days):
+        if confirmed_sessions_per_week > availability.weekly_capacity:
             raise PlanningDecisionError(
                 "decision_invalid", "La fréquence confirmée dépasse les jours disponibles."
             )

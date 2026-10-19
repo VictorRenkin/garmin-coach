@@ -12,7 +12,7 @@ import os
 import re
 import threading
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
 
@@ -58,7 +58,16 @@ _SECRET = re.compile(r"(?i)\b(api[_ -]?key|token|cookie|password|mot de passe)\b
 
 SYSTEM_PROMPT_V2 = """Tu proposes un plan sportif d'une semaine uniquement à partir de l'entrée structurée fournie.
 Le nombre de séances doit être exactement plan_constraints.confirmed_sessions_per_week.
-Utilise uniquement allowed_dates et une date au plus une fois. Respecte les contraintes déclarées.
+Utilise uniquement allowed_dates. Une séance par date par défaut. Une double journée
+est possible uniquement sur plan_constraints.double_session_days explicitement déclarés,
+avec repos minimal et plafond quotidien déclarés ; jamais pour beginner/comeback,
+une douleur affectant l'entraînement ou une récupération insuffisamment documentée.
+Dans un plan avec double journée, chaque séance a un session_id distinct et stable,
+et starts_at au format ISO avec offset. Ordonne les séances chronologiquement.
+Respecte le repos minimal entre la fin d'une séance et le début de la suivante,
+y compris le jour suivant. Pas de séance traversant minuit, ni de date dans blocked_dates.
+Le plafond reste sept séances par semaine et deux par date : ce sont des capacités,
+pas une recommandation d'augmenter la fréquence. Respecte les contraintes déclarées.
 N'invente aucune donnée personnelle, zone cardiaque, blessure, récupération ou performance.
 Si les zones cardiaques ne sont pas fiables, exprime l'intensité qualitativement (aisance respiratoire, effort perçu).
 La distance est optionnelle. N'ajoute pas de pseudo-précision si les faits sont limités.
@@ -135,6 +144,7 @@ class PlanGenerationInputV2(StrictContract):
     unrecorded_activities: list[UnrecordedActivity]
     active_declared_context: list[DeclaredPlanContextV2]
     important_preferences: list[str]
+    blocked_dates: list[date] = Field(default_factory=list, max_length=7)
 
 
 def _normalized(value: str, maximum: int) -> str:
@@ -166,6 +176,8 @@ class PlanSessionStructureV2(StrictContract):
 
 
 class PlanSessionV2(StrictContract):
+    session_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+    starts_at: datetime | None = None
     date: date
     sport: Literal["running", "cycling", "swimming", "strength", "cross_training", "other"]
     session_type: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
@@ -179,6 +191,11 @@ class PlanSessionV2(StrictContract):
 
     @model_validator(mode="after")
     def validate_complex_duration(self) -> "PlanSessionV2":
+        if self.starts_at is not None:
+            if self.session_id is None or self.starts_at.utcoffset() is None:
+                raise ValueError("Un horaire exige une identité de séance et un offset explicites.")
+            if self.starts_at.date() != self.date:
+                raise ValueError("La date locale de starts_at doit être celle de la séance.")
         if self.structure.blocks is not None:
             if self.sport != "running":
                 raise ValueError("Les blocs structurés distincts sont actuellement réservés à la course.")
@@ -200,6 +217,15 @@ class PlanProposalV2(StrictContract):
     strategy: str = Field(min_length=1, max_length=1_000)
     sessions: list[PlanSessionV2] = Field(min_length=1, max_length=7)
     limitations: list[str] = Field(default_factory=list, max_length=12)
+
+    @model_validator(mode="after")
+    def validate_identities(self) -> "PlanProposalV2":
+        identities = [session.session_id for session in self.sessions if session.session_id is not None]
+        if identities and len(identities) != len(self.sessions):
+            raise ValueError("Une proposition identifiée exige une identité pour chaque séance.")
+        if len(identities) != len(set(identities)):
+            raise ValueError("Les identifiants de séance doivent être distincts.")
+        return self
 
     @field_validator("summary", "strategy")
     @classmethod
@@ -272,6 +298,34 @@ def _next_monday(reference: date) -> date:
     return reference + timedelta(days=(7 - reference.weekday()) % 7 or 7)
 
 
+def local_calendar_blocked_dates(start: date, end: date) -> list[date]:
+    """Reuse local metadata and existing legacy plan files; expose dates only."""
+    from .config import PLANS_DIR
+    from .local_activity_history import iter_local_activity_history
+    days: set[date] = set()
+    for item in iter_local_activity_history(start_date=start, end_date=end):
+        try:
+            day = date.fromisoformat(str(item.get("startTimeLocal") or "")[:10])
+        except ValueError:
+            continue
+        days.add(day)
+    for target in PLANS_DIR.glob("*.json"):
+        try:
+            payload = json.loads(target.read_text(encoding="utf-8"))
+            sessions = payload.get("seances", [])
+            if not isinstance(sessions, list):
+                raise ValueError("Invalid legacy calendar")
+            for item in sessions:
+                if not isinstance(item, dict) or item.get("statut") == "skippee":
+                    continue
+                day = date.fromisoformat(str(item.get("date") or ""))
+                if start <= day <= end:
+                    days.add(day)
+        except (OSError, UnicodeDecodeError, ValueError, AttributeError) as exc:
+            raise PlanProposalError("calendar_unavailable", "Un plan local ne permet pas de vérifier le calendrier.") from exc
+    return sorted(days)
+
+
 def _compact_training_facts(runtime: RuntimeMotionestContextV1) -> dict[str, Any]:
     athlete = runtime.context.athlete_state
     pattern = runtime.training_pattern
@@ -286,6 +340,7 @@ def _compact_training_facts(runtime: RuntimeMotionestContextV1) -> dict[str, Any
         "structured_intervals": pattern.session_patterns.structured_intervals.model_dump(mode="json"),
         "relative_long_run": pattern.session_patterns.relative_long_run.model_dump(mode="json"),
         "race_evidence": pattern.session_patterns.race.model_dump(mode="json"),
+        "pain_affecting_training": runtime.context.integration.safety_context.pain_or_injury_affecting_training,
     }
 
 
@@ -335,7 +390,7 @@ def build_plan_generation_input_v2(
     start = period_start or _next_monday(date.fromisoformat(runtime.reference_date))
     period = PlanPeriodV2(start=start, end=start + timedelta(days=6))
     allowed = [start + timedelta(days=i) for i in range(7) if DAY_NAMES[(start + timedelta(days=i)).weekday()] in constraints.available_days]
-    if len(allowed) < constraints.confirmed_sessions_per_week:
+    if len(allowed) + len(constraints.double_session_days) < constraints.confirmed_sessions_per_week:
         raise PlanProposalError("plan_constraints_invalid", "La fréquence confirmée dépasse les dates disponibles.")
     memory: list[DeclaredPlanContextV2] = []
     for item in decision_memory_context("plan_generation"):
@@ -346,6 +401,7 @@ def build_plan_generation_input_v2(
     subjective = runtime.context.subjective_context
     preferences = [safe for value in subjective.important_preferences if (safe := _safe_text(value))]
     confidence = runtime.context.data_confidence
+    blocked = local_calendar_blocked_dates(start, period.end)
     return PlanGenerationInputV2(
         as_of=date.fromisoformat(runtime.reference_date),
         period=period,
@@ -365,6 +421,7 @@ def build_plan_generation_input_v2(
         unrecorded_activities=subjective.unrecorded_activities,
         active_declared_context=memory,
         important_preferences=preferences,
+        blocked_dates=blocked,
     )
 
 
@@ -374,13 +431,35 @@ def plan_generation_fingerprint(source: PlanGenerationInputV2) -> str:
 
 def proposal_fingerprint(proposal: PlanProposalV2) -> str:
     """Identify the exact canonical proposal content, independently of its input."""
+    payload = proposal.model_dump(mode="json")
+    for session in payload["sessions"]:
+        for field in ("session_id", "starts_at"):
+            if session.get(field) is None:
+                session.pop(field, None)
     return _digest(
         {
             "schema_version": proposal.schema_version,
             "prompt_version": proposal.prompt_version,
-            "proposal": proposal.model_dump(mode="json"),
+            "proposal": payload,
         }
     )
+
+
+def session_fingerprint(session: PlanSessionV2) -> str:
+    return _digest(session.model_dump(mode="json"))
+
+
+def session_execution_seconds(session: PlanSessionV2) -> float:
+    structure = session.structure
+    if structure.blocks is not None:
+        exact = validate_blocks_duration(structure.blocks, structure.warmup_minutes or 0,
+                                         structure.cooldown_minutes or 0, session.duration_minutes)
+    elif structure.effort_minutes is not None:
+        exact = ((structure.warmup_minutes or 0) + (structure.cooldown_minutes or 0)
+                 + (structure.repetitions or 1) * (structure.effort_minutes + (structure.recovery_minutes or 0))) * 60
+    else:
+        exact = session.duration_minutes * 60
+    return max(exact, session.duration_minutes * 60)
 
 
 def validate_plan_proposal(proposal: PlanProposalV2, source: PlanGenerationInputV2) -> PlanValidationResult:
@@ -393,12 +472,45 @@ def validate_plan_proposal(proposal: PlanProposalV2, source: PlanGenerationInput
     if len(proposal.sessions) != expected:
         add("session_count_mismatch", "sessions", f"Le plan doit contenir exactement {expected} séances.")
     dates = [session.date for session in proposal.sessions]
-    if len(dates) != len(set(dates)):
-        add("duplicate_session_date", "sessions.date", "Une date ne peut contenir qu'une séance dans V2.")
+    doubles = {day for day in dates if dates.count(day) > 1}
+    constraints = source.plan_constraints
+    for day in doubles:
+        sessions = [session for session in proposal.sessions if session.date == day]
+        if DAY_NAMES[day.weekday()] not in constraints.double_session_days:
+            add("duplicate_session_date", "sessions.date", "Cette double journée n'est pas autorisée explicitement.")
+        if len(sessions) > 2:
+            add("daily_session_limit", "sessions.date", "Au plus deux séances par date autorisée.")
+        if source.goal.intent in {"beginner", "comeback"}:
+            add("double_day_inappropriate", "sessions", "Une double journée n'est pas proposée pour un débutant ou une reprise.")
+        if source.training_facts.get("pain_affecting_training") is not False or source.confidence.get("recovery") not in {"medium", "high"}:
+            add("double_day_safety_uncertain", "sessions", "Le contexte de douleur ou de récupération ne permet pas cette double journée.")
+        if constraints.minimum_recovery_hours is None or constraints.max_daily_duration_minutes is None:
+            add("double_day_constraints_missing", "sessions", "Précise le repos minimal et le volume quotidien maximal.")
+        elif sum(session_execution_seconds(session) for session in sessions) > constraints.max_daily_duration_minutes * 60:
+            add("daily_duration_limit", "sessions", "Le volume quotidien dépasse la limite déclarée.")
+    if doubles:
+        if any(session.session_id is None or session.starts_at is None for session in proposal.sessions):
+            add("session_schedule_missing", "sessions", "Chaque séance du plan doit avoir une identité et un horaire avec offset.")
+        else:
+            chronological = sorted(proposal.sessions, key=lambda session: session.starts_at.astimezone(timezone.utc))
+            if chronological != proposal.sessions:
+                add("session_order_invalid", "sessions", "Les séances doivent suivre leur ordre chronologique réel.")
+            for index, session in enumerate(chronological):
+                end = session.starts_at + timedelta(seconds=session_execution_seconds(session))
+                if end.date() != session.date:
+                    add("session_crosses_midnight", "sessions", "La séance ne doit pas déborder sur une autre date.")
+                if index:
+                    previous = chronological[index - 1]
+                    previous_end = previous.starts_at.astimezone(timezone.utc) + timedelta(seconds=session_execution_seconds(previous))
+                    rest = (session.starts_at.astimezone(timezone.utc) - previous_end).total_seconds()
+                    if constraints.minimum_recovery_hours is None or rest < constraints.minimum_recovery_hours * 3600:
+                        add("insufficient_recovery", "sessions", "Les horaires ne respectent pas le repos minimal déclaré.")
     allowed = set(source.allowed_dates)
     for index, session in enumerate(proposal.sessions):
         if session.date not in allowed:
             add("unavailable_day", f"sessions.{index}.date", "La séance est placée sur un jour indisponible.")
+        if session.date in source.blocked_dates:
+            add("existing_calendar_conflict", f"sessions.{index}.date", "Une activité existante occupe déjà cette date.")
     hard_keys = {item.key for item in source.active_declared_context if item.category == "constraint"}
     if "medical_no_training" in hard_keys and proposal.sessions:
         add("medical_no_training", "sessions", "Une contrainte active interdit actuellement toute séance.")
@@ -503,3 +615,35 @@ def generate_plan_proposal(
                 )
             _write_store(store)
             return _state(source)
+
+
+def revise_plan_session(user_id: str, *, session_id: str, expected_proposal_fingerprint: str,
+                        patch: dict[str, Any], source: PlanGenerationInputV2 | None = None) -> PlanProposalStateV2:
+    """Revise exactly one identified session, reusing proposal validation/storage.
+
+    No acceptance, delivery or modification of another session is performed.
+    """
+    with user_context(user_id), _WRITE_LOCK:
+        source = source or build_plan_generation_input_v2(user_id, build_runtime_motionest_context(user_id))
+        current = _state(source)
+        if current.status != "available" or current.proposal is None:
+            raise PlanProposalError("proposal_unavailable", "Aucune proposition actuelle à modifier.")
+        if proposal_fingerprint(current.proposal) != expected_proposal_fingerprint:
+            raise PlanProposalError("proposal_fingerprint_mismatch", "La proposition affichée a changé.")
+        indexes = [index for index, item in enumerate(current.proposal.sessions) if item.session_id == session_id]
+        if len(indexes) != 1:
+            raise PlanProposalError("session_not_found", "Séance identifiée introuvable.")
+        if not isinstance(patch, dict) or not patch or set(patch) - (set(PlanSessionV2.model_fields) - {"session_id"}):
+            raise PlanProposalError("session_patch_invalid", "Le patch contient un champ non modifiable.")
+        payload = current.proposal.model_dump(mode="json")
+        index = indexes[0]
+        payload["sessions"][index].update(patch)
+        candidate = PlanProposalV2.model_validate(payload)
+        validation = validate_plan_proposal(candidate, source)
+        if not validation.valid:
+            raise PlanProposalError("session_patch_invalid", validation.errors[0].message)
+        store, diagnostics = _read_store()
+        if store is None or diagnostics:
+            raise PlanProposalError("proposal_unavailable", "La proposition ne peut pas être sauvegardée.")
+        _write_store(store.model_copy(update={"proposal": candidate}))
+        return _state(source)

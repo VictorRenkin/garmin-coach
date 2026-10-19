@@ -26,7 +26,7 @@ from garminconnect.workout import (
 )
 
 from .config import GARMIN_DELIVERY_FILE, ensure_directories, user_context
-from .garmin_workouts import RUNNING_SPORT, _calendar_entries
+from .garmin_workouts import RUNNING_SPORT, _calendar_entries, _walk_objects
 from .session_blocks import validate_blocks_duration
 from .structured_workouts import build_block_steps
 from .plan_acceptance import get_plan_acceptance_state
@@ -35,6 +35,8 @@ from .plan_proposal import (
     PlanSessionV2,
     get_plan_proposal_state,
     proposal_fingerprint,
+    session_fingerprint,
+    local_calendar_blocked_dates,
 )
 
 
@@ -95,7 +97,7 @@ def _accepted_proposal(user_id: str) -> tuple[PlanProposalStateV2, str]:
             "proposal_unavailable", "Aucune semaine actuelle n'est disponible."
         )
     acceptance = get_plan_acceptance_state(user_id, proposal_state=proposal_state)
-    if acceptance.status != "accepted":
+    if not any(session.session_id for session in proposal_state.proposal.sessions) and acceptance.status != "accepted":
         raise GarminDeliveryError(
             "proposal_not_accepted", "Valide d'abord cette semaine dans Motionest."
         )
@@ -104,6 +106,51 @@ def _accepted_proposal(user_id: str) -> tuple[PlanProposalStateV2, str]:
 
 def _delivery_key(fingerprint: str, session_index: int) -> str:
     return f"{fingerprint}:{session_index}"
+
+
+def _session_delivery_key(fingerprint: str, session_index: int, session: PlanSessionV2) -> str:
+    if session.session_id is not None:
+        return f"session:{session.session_id}:{session_fingerprint(session)}"
+    return _delivery_key(fingerprint, session_index)
+
+
+def _check_calendar_collisions(client: Any, target_date: date, session: PlanSessionV2,
+                               proposal_state: PlanProposalStateV2, store: dict[str, Any], user_id: str, fingerprint: str) -> None:
+    getter = getattr(client, "get_scheduled_workouts", None)
+    try:
+        payload = getter(target_date.year, target_date.month) if callable(getter) else client.connectapi(
+            f"/calendar-service/year/{target_date.year}/month/{target_date.month - 1}")
+        if not isinstance(payload, (dict, list)) or (isinstance(payload, dict) and not any(isinstance(payload.get(key), list) for key in ("calendarItems", "items", "calendarItemsList"))):
+            raise ValueError("Unrecognized calendar response")
+    except Exception as exc:
+        raise GarminDeliveryError("calendar_unavailable", "Le calendrier n'est pas vérifiable ; aucun envoi n'est effectué.") from exc
+    allowed: set[int] = set()
+    assert proposal_state.proposal is not None
+    for index, candidate in enumerate(proposal_state.proposal.sessions):
+        record = store["deliveries"].get(_session_delivery_key(fingerprint, index, candidate)) or {}
+        if record.get("scheduled_date") == target_date.isoformat() and record.get("workout_id"):
+            if candidate.session_id is None or get_plan_acceptance_state(user_id, proposal_state=proposal_state, session_id=candidate.session_id).status == "accepted":
+                allowed.add(int(record["workout_id"]))
+    for item in _walk_objects(payload):
+        if item.get("itemType") not in {"workout", "activity"}:
+            continue
+        day = _item_date(item)
+        if day is None:
+            raise GarminDeliveryError("calendar_unavailable", "Un événement sans date empêche de vérifier les collisions.")
+        if day != target_date.isoformat():
+            continue
+        try:
+            owned = int(item.get("workoutId") or 0) in allowed
+        except (ValueError, TypeError):
+            owned = False
+        if not owned:
+            raise GarminDeliveryError("calendar_collision", "Une activité ou programmation existante occupe déjà cette date.")
+    try:
+        local_conflict = target_date in local_calendar_blocked_dates(target_date, target_date)
+    except Exception as exc:
+        raise GarminDeliveryError("calendar_unavailable", "Le calendrier local n'est pas vérifiable.") from exc
+    if local_conflict:
+        raise GarminDeliveryError("calendar_collision", "Une activité locale existe déjà à cette date.")
 
 
 def _workout_name(session: PlanSessionV2) -> str:
@@ -232,6 +279,8 @@ def _public_record(
         "instructions_exported": False,
         "last_error": value.get("last_error"),
         "updated_at": value.get("updated_at"),
+        "session_id": session.session_id,
+        "starts_at": session.starts_at.isoformat() if session.starts_at else None,
     }
 
 
@@ -248,7 +297,7 @@ def get_garmin_delivery_state(user_id: str) -> dict[str, Any]:
                 _public_record(
                     session,
                     index,
-                    store["deliveries"].get(_delivery_key(fingerprint, index)),
+                    store["deliveries"].get(_session_delivery_key(fingerprint, index, session)),
                 )
                 for index, session in enumerate(proposal_state.proposal.sessions)
             ],
@@ -261,6 +310,7 @@ def publish_accepted_session(
     *,
     session_index: int,
     scheduled_date: date | None = None,
+    expected_session_id: str | None = None,
 ) -> dict[str, Any]:
     """Create, schedule and verify one accepted session without duplicate retries."""
     with user_context(user_id), _WRITE_LOCK:
@@ -270,24 +320,35 @@ def publish_accepted_session(
         if session_index < 0 or session_index >= len(sessions):
             raise GarminDeliveryError("session_not_found", "Séance introuvable.")
         session = sessions[session_index]
+        if expected_session_id is not None and session.session_id != expected_session_id:
+            raise GarminDeliveryError("session_identity_conflict", "L'identité de la séance affichée a changé.")
+        if session.session_id is not None:
+            decision = get_plan_acceptance_state(user_id, proposal_state=proposal_state, session_id=session.session_id)
+            if decision.status != "accepted":
+                raise GarminDeliveryError("session_not_accepted", "Valide explicitement cette séance avant son envoi.")
         target_date = scheduled_date or session.date
         if target_date < date.today():
             raise GarminDeliveryError(
                 "scheduled_date_in_past", "La séance ne peut pas être programmée dans le passé."
             )
+        if session.session_id is not None and target_date != session.date:
+            raise GarminDeliveryError("scheduled_date_conflict", "Révise et accepte la séance avant de changer sa date.")
         if session.sport != "running":
             raise GarminDeliveryError(
                 "sport_not_supported",
                 "L'export Garmin structuré est actuellement disponible pour la course.",
             )
         store = _read_store()
-        key = _delivery_key(fingerprint, session_index)
+        key = _session_delivery_key(fingerprint, session_index, session)
+        _check_calendar_collisions(client, target_date, session, proposal_state, store, user_id, fingerprint)
         record = store["deliveries"].get(key) or {
             "proposal_fingerprint": fingerprint,
             "session_index": session_index,
             "session_date": session.date.isoformat(),
             "scheduled_date": target_date.isoformat(),
             "calendar_status": "not_scheduled",
+            "session_id": session.session_id,
+            "session_fingerprint": session_fingerprint(session) if session.session_id else None,
         }
         if record.get("scheduled_date") != target_date.isoformat() and record.get(
             "workout_id"

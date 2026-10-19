@@ -188,6 +188,8 @@ def _session_offsets(count: int, available_days: list[str] | None = None) -> lis
             if day in day_numbers
         }
     )
+    if available_days and len(preferred) < count:
+        raise ValueError("Le chemin legacy ne crée pas de doubles journées ; utilise la proposition V2 autorisée.")
     if len(preferred) >= count:
         if count == 1:
             return [preferred[len(preferred) // 2]]
@@ -267,10 +269,8 @@ def find_planned_session(activity: dict[str, Any]) -> dict[str, Any] | None:
                 return session
 
     # Date remains a fallback for manually recorded runs without a workout ID.
-    return next(
-        (session for session in sessions if session.get("date") == raw_date),
-        None,
-    )
+    candidates = [session for session in sessions if session.get("date") == raw_date]
+    return candidates[0] if len(candidates) == 1 else None
 
 
 def _activity_date(activity: dict[str, Any]) -> date | None:
@@ -325,6 +325,8 @@ def completed_session_indexes(
     for activity in activities:
         activity_date = str(activity.get("startTimeLocal") or "")[:10]
         activity_workout_id = activity.get("workoutId")
+        matches: list[int] = []
+        date_matches: list[int] = []
         for index, session in enumerate(planned_sessions):
             garmin = session.get("garmin")
             planned_workout_id = (
@@ -335,11 +337,14 @@ def completed_session_indexes(
                 and planned_workout_id is not None
                 and str(activity_workout_id) == str(planned_workout_id)
             )
-            if same_workout or (
-                activity_date and activity_date == str(session.get("date") or "")
-            ):
-                completed.add(index)
-                break
+            if same_workout:
+                matches.append(index)
+            if activity_date and activity_date == str(session.get("date") or ""):
+                date_matches.append(index)
+        if len(matches) == 1:
+            completed.add(matches[0])
+        elif not matches and len(date_matches) == 1:
+            completed.add(date_matches[0])
     return completed
 
 

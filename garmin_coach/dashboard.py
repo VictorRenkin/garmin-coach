@@ -117,6 +117,7 @@ from .plan_proposal import (
     generate_plan_proposal,
     get_plan_proposal_state,
     proposal_fingerprint,
+    revise_plan_session,
 )
 from .plan_acceptance import (
     PlanAcceptanceError,
@@ -1492,6 +1493,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         body.get("availableDays") or [],
                         preferred_sessions_per_week=preferred,
                         long_session_preferred_days=[],
+                        double_session_days=body.get("doubleSessionDays") or [],
+                        minimum_recovery_hours=body.get("minimumRecoveryHours"),
+                        max_daily_duration_minutes=body.get("maxDailyDurationMinutes"),
                     )
                     inputs = update_motionest_inputs_v1(
                         user_id, availability=availability
@@ -1954,6 +1958,28 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 return
             _json_response(self, {"ok": True, **state.model_dump(mode="json")})
             return
+        if path == "/api/plan-proposal/session":
+            user_id = current_user_id()
+            if not user_id:
+                _json_response(self, {"ok": False, "message": "Utilisateur Motionest indisponible."}, 401)
+                return
+            try:
+                content_length = int(self.headers.get("Content-Length", "0"))
+                if not 0 <= content_length <= 65_536:
+                    raise ValueError("Modification de séance trop volumineuse.")
+                body = json.loads(self.rfile.read(content_length) or b"{}")
+                if not isinstance(body, dict):
+                    raise ValueError("Modification de séance invalide.")
+                state = revise_plan_session(user_id, session_id=str(body.get("session_id") or ""),
+                    expected_proposal_fingerprint=str(body.get("proposal_fingerprint") or ""), patch=body.get("patch"))
+            except (ValueError, TypeError, json.JSONDecodeError) as exc:
+                _json_response(self, {"ok": False, "message": str(exc)}, 400)
+                return
+            except PlanProposalError as exc:
+                _json_response(self, {"ok": False, "code": exc.code, "message": str(exc)}, 409)
+                return
+            _json_response(self, {"ok": True, **state.model_dump(mode="json"), "proposal_fingerprint": proposal_fingerprint(state.proposal)})
+            return
         if path == "/api/plan-proposal/decision":
             user_id = current_user_id()
             if not user_id:
@@ -1972,6 +1998,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     input_fingerprint=str(body.get("input_fingerprint") or ""),
                     expected_proposal_fingerprint=str(body.get("proposal_fingerprint") or ""),
                     feedback=body.get("feedback"),
+                    **({"session_id": str(body["session_id"])} if body.get("session_id") is not None else {}),
                 )
             except (ValueError, TypeError, json.JSONDecodeError) as exc:
                 _json_response(self, {"ok": False, "message": str(exc)}, 400)
@@ -2010,11 +2037,23 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 scheduled_date = (
                     date.fromisoformat(str(requested_date)) if requested_date else None
                 )
+                try:
+                    proposal_state = get_plan_proposal_state(user_id)
+                except PlanProposalError:
+                    proposal_state = None  # The existing publisher remains authoritative for unavailable legacy plans.
+                if proposal_state is not None and proposal_state.proposal is not None and 0 <= session_index < len(proposal_state.proposal.sessions):
+                    selected = proposal_state.proposal.sessions[session_index]
+                    if selected.session_id is not None:
+                        if body.get("session_id") != selected.session_id:
+                            raise GarminDeliveryError("session_identity_conflict", "L'identité exacte de la séance est requise.")
+                        if get_plan_acceptance_state(user_id, proposal_state=proposal_state, session_id=selected.session_id).status != "accepted":
+                            raise GarminDeliveryError("session_not_accepted", "Valide explicitement cette séance avant son envoi.")
                 delivery = publish_accepted_session(
                     user_id,
                     connect(load_settings()),
                     session_index=session_index,
                     scheduled_date=scheduled_date,
+                    **({"expected_session_id": str(body["session_id"])} if body.get("session_id") is not None else {}),
                 )
             except (ValueError, TypeError, json.JSONDecodeError) as exc:
                 _json_response(self, {"ok": False, "message": str(exc)}, 400)

@@ -328,7 +328,7 @@ def build_first_run_journey(user_id: str) -> dict[str, Any]:
             }
         acceptance = _safe_plan_acceptance_state(user_id)
         base["plan_acceptance"] = acceptance
-        if acceptance.get("status") == "accepted":
+        if acceptance.get("status") in {"accepted", "partially_accepted"}:
             return {**base, "stage": "dashboard", "actions": []}
         return {
             **base,

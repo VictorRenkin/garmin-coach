@@ -19,13 +19,14 @@ from .plan_proposal import (
     PlanProposalStateV2,
     get_plan_proposal_state,
     proposal_fingerprint,
+    session_fingerprint,
 )
 
 
 SCHEMA_VERSION = 2
 Decision = Literal["accepted", "refused", "revision_requested"]
 AcceptanceStatus = Literal[
-    "missing", "accepted", "refused", "revision_requested", "stale", "corrupt"
+    "missing", "accepted", "partially_accepted", "refused", "revision_requested", "stale", "corrupt"
 ]
 _WRITE_LOCK = threading.RLock()
 
@@ -53,6 +54,8 @@ class PlanAcceptanceDecisionV2(StrictContract):
     feedback: str | None = Field(default=None, max_length=1_000)
     decided_at: str
     source: Literal["user_confirmed"] = "user_confirmed"
+    session_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+    session_fingerprint: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
 
     @field_validator("feedback", mode="before")
     @classmethod
@@ -83,6 +86,8 @@ class PlanAcceptanceStateV2(StrictContract):
     decision: PlanAcceptanceDecisionV2 | None = None
     diagnostics: list[str] = Field(default_factory=list)
     idempotent: bool = False
+    session_id: str | None = None
+    sessions: list[dict] = Field(default_factory=list)
 
 
 class PlanAcceptanceError(RuntimeError):
@@ -118,7 +123,7 @@ def _write_store(store: PlanAcceptanceStoreV2) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def _current_state(proposal_state: PlanProposalStateV2) -> PlanAcceptanceStateV2:
+def _current_state(proposal_state: PlanProposalStateV2, session_id: str | None = None) -> PlanAcceptanceStateV2:
     store, corrupt = _read_store()
     if corrupt or store is None:
         return PlanAcceptanceStateV2(
@@ -129,18 +134,32 @@ def _current_state(proposal_state: PlanProposalStateV2) -> PlanAcceptanceStateV2
         if proposal_state.status == "available" and proposal_state.proposal is not None
         else None
     )
-    if not store.decisions:
+    scoped = [item for item in store.decisions if item.session_id == session_id]
+    session = next((item for item in proposal_state.proposal.sessions if item.session_id == session_id), None) if proposal_state.proposal and session_id else None
+    if session_id is not None and session is None:
+        raise PlanAcceptanceError("session_not_found", "Séance identifiée introuvable.")
+    if not scoped:
         return PlanAcceptanceStateV2(
             status="missing",
             input_fingerprint=proposal_state.input_fingerprint,
             proposal_fingerprint=current_proposal_fingerprint,
+            session_id=session_id,
         )
-    latest = store.decisions[-1]
+    latest = scoped[-1]
+    latest_position = max(index for index, item in enumerate(store.decisions) if item == latest)
+    withdrawn = next((item for item in reversed(store.decisions[latest_position + 1:])
+                      if item.session_id is None and item.decision in {"refused", "revision_requested"}
+                      and item.input_fingerprint == proposal_state.input_fingerprint), None) if session_id else None
+    if withdrawn is not None:
+        return PlanAcceptanceStateV2(status=withdrawn.decision, input_fingerprint=proposal_state.input_fingerprint,
+            proposal_fingerprint=current_proposal_fingerprint, session_id=session_id, decision=withdrawn,
+            diagnostics=["session_acceptance_withdrawn_by_plan_decision"])
     if (
         proposal_state.status != "available"
         or current_proposal_fingerprint is None
         or latest.input_fingerprint != proposal_state.input_fingerprint
-        or latest.proposal_fingerprint != current_proposal_fingerprint
+        or (latest.session_fingerprint != session_fingerprint(session) if session is not None
+            else latest.proposal_fingerprint != current_proposal_fingerprint)
     ):
         return PlanAcceptanceStateV2(
             status="stale",
@@ -148,22 +167,34 @@ def _current_state(proposal_state: PlanProposalStateV2) -> PlanAcceptanceStateV2
             proposal_fingerprint=current_proposal_fingerprint,
             decision=latest,
             diagnostics=["plan_or_generation_input_changed"],
+            session_id=session_id,
         )
     return PlanAcceptanceStateV2(
         status=latest.decision,
         input_fingerprint=proposal_state.input_fingerprint,
         proposal_fingerprint=current_proposal_fingerprint,
         decision=latest,
+        session_id=session_id,
     )
 
 
 def get_plan_acceptance_state(
-    user_id: str, *, proposal_state: PlanProposalStateV2 | None = None
+    user_id: str, *, proposal_state: PlanProposalStateV2 | None = None, session_id: str | None = None
 ) -> PlanAcceptanceStateV2:
     """Read local proposal and decision state. Never generates a plan."""
     with user_context(user_id):
         current = proposal_state or get_plan_proposal_state(user_id)
-        return _current_state(current)
+        state = _current_state(current, session_id)
+        if session_id is None and current.proposal is not None and current.status == "available":
+            states = [_current_state(current, item.session_id) for item in current.proposal.sessions if item.session_id]
+            state.sessions = [dict(session_id=item.session_id, status=item.status,
+                                  session_fingerprint=session_fingerprint(session))
+                              for item, session in zip(states, current.proposal.sessions)]
+            if states and state.status != "corrupt":
+                accepted = sum(item.status == "accepted" for item in states)
+                if accepted and state.status != "accepted":
+                    state.status = "accepted" if accepted == len(states) else "partially_accepted"
+        return state
 
 
 def record_plan_acceptance_decision(
@@ -174,6 +205,7 @@ def record_plan_acceptance_decision(
     expected_proposal_fingerprint: str,
     feedback: str | None = None,
     proposal_state: PlanProposalStateV2 | None = None,
+    session_id: str | None = None,
 ) -> PlanAcceptanceStateV2:
     with user_context(user_id):
         current = proposal_state or get_plan_proposal_state(user_id)
@@ -191,6 +223,9 @@ def record_plan_acceptance_decision(
             raise PlanAcceptanceError(
                 "proposal_fingerprint_mismatch", "La proposition affichée n'est plus actuelle."
             )
+        session = next((item for item in current.proposal.sessions if item.session_id == session_id), None) if session_id else None
+        if session_id is not None and session is None:
+            raise PlanAcceptanceError("session_not_found", "Séance identifiée introuvable.")
         try:
             value = PlanAcceptanceDecisionV2(
                 decision=decision,
@@ -198,6 +233,8 @@ def record_plan_acceptance_decision(
                 proposal_fingerprint=actual_proposal_fingerprint,
                 feedback=feedback,
                 decided_at=datetime.now().astimezone().isoformat(timespec="seconds"),
+                session_id=session_id,
+                session_fingerprint=session_fingerprint(session) if session is not None else None,
             )
         except ValidationError as error:
             raise PlanAcceptanceError("decision_invalid", str(error)) from error
@@ -208,17 +245,14 @@ def record_plan_acceptance_decision(
                     "acceptance_store_corrupt",
                     "Le journal de décision est corrompu et ne sera pas écrasé.",
                 )
-            identical = next(
-                (
-                    item
-                    for item in reversed(store.decisions)
-                    if item.input_fingerprint == value.input_fingerprint
-                    and item.proposal_fingerprint == value.proposal_fingerprint
-                    and item.decision == value.decision
-                    and item.feedback == value.feedback
-                ),
-                None,
-            )
+            latest_scoped = next((item for item in reversed(store.decisions) if item.session_id == session_id), None)
+            identical = None
+            if latest_scoped is not None:
+                same_facts = (latest_scoped.input_fingerprint == value.input_fingerprint
+                    and (latest_scoped.session_fingerprint == value.session_fingerprint if session_id else latest_scoped.proposal_fingerprint == value.proposal_fingerprint)
+                    and latest_scoped.decision == value.decision and latest_scoped.feedback == value.feedback)
+                if same_facts and _current_state(current, session_id).status == decision:
+                    identical = latest_scoped
             if identical is not None:
                 return PlanAcceptanceStateV2(
                     status=identical.decision,
@@ -226,6 +260,7 @@ def record_plan_acceptance_decision(
                     proposal_fingerprint=actual_proposal_fingerprint,
                     decision=identical,
                     idempotent=True,
+                    session_id=session_id,
                 )
             _write_store(
                 PlanAcceptanceStoreV2(decisions=[*store.decisions, value][-100:])
@@ -235,4 +270,5 @@ def record_plan_acceptance_decision(
             input_fingerprint=current.input_fingerprint,
             proposal_fingerprint=actual_proposal_fingerprint,
             decision=value,
+            session_id=session_id,
         )

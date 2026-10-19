@@ -4,7 +4,9 @@ from __future__ import annotations
 from datetime import date as Date
 from typing import Any, Iterable, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator, model_serializer
+import math
+from .session_limits import MAX_SESSION_MINUTES
 
 
 SCHEMA_VERSION = 1
@@ -22,6 +24,30 @@ class AvailabilityV1(StrictContract):
     preferred_sessions_per_week: int | None = Field(default=None, ge=1, le=7)
     long_session_preferred_days: list[Day] = Field(default_factory=list)
     effective_from: Date | None = None
+    double_session_days: list[Day] = Field(default_factory=list)
+    minimum_recovery_hours: float | None = Field(default=None, gt=0, le=168)
+    max_daily_duration_minutes: int | None = Field(default=None, gt=0, le=MAX_SESSION_MINUTES)
+
+    @property
+    def weekly_capacity(self) -> int:
+        return min(7, len(self.available_days) + len(self.double_session_days))
+
+    @model_serializer(mode="wrap")
+    def preserve_legacy_defaults(self, handler):
+        value = handler(self)
+        for field in ("double_session_days", "minimum_recovery_hours", "max_daily_duration_minutes"):
+            if value.get(field) in (None, []):
+                value.pop(field, None)
+        return value
+
+    @field_validator("minimum_recovery_hours", "max_daily_duration_minutes", mode="before")
+    @classmethod
+    def numeric_calendar_bounds(cls, value, info):
+        if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value)):
+            raise ValueError("Les bornes de calendrier doivent être numériques et finies.")
+        if info.field_name == "max_daily_duration_minutes" and value is not None and not isinstance(value, int):
+            raise ValueError("La durée quotidienne doit être un entier en minutes.")
+        return value
 
     @field_validator("preferred_sessions_per_week", mode="before")
     @classmethod
@@ -34,6 +60,11 @@ class AvailabilityV1(StrictContract):
 
     @model_validator(mode="after")
     def validate_week(self) -> "AvailabilityV1":
+        expected_double = [day for day in CANONICAL_DAYS if day in self.double_session_days]
+        if self.double_session_days != expected_double or set(self.double_session_days) - set(self.available_days):
+            raise ValueError("Les doubles journées doivent être uniques, ordonnées et disponibles.")
+        if self.double_session_days and (self.minimum_recovery_hours is None or self.max_daily_duration_minutes is None):
+            raise ValueError("Les doubles journées exigent un repos minimal et une durée quotidienne maximale déclarés.")
         if len(set(self.available_days)) != len(self.available_days):
             raise ValueError("available_days ne peut pas contenir de doublon.")
         expected_available = [
@@ -61,7 +92,7 @@ class AvailabilityV1(StrictContract):
             )
         if (
             self.preferred_sessions_per_week is not None
-            and self.preferred_sessions_per_week > len(self.available_days)
+            and self.preferred_sessions_per_week > self.weekly_capacity
         ):
             raise ValueError(
                 "Le nombre de séances préférées dépasse le nombre de jours disponibles."
@@ -103,6 +134,9 @@ def build_availability_v1(
     preferred_sessions_per_week: int | None = None,
     long_session_preferred_days: Iterable[object] | None = None,
     effective_from: Date | str | None = None,
+    double_session_days: Iterable[object] | None = None,
+    minimum_recovery_hours: float | None = None,
+    max_daily_duration_minutes: int | None = None,
 ) -> AvailabilityV1:
     """Normalize UI values, then construct the strict Availability V1 contract."""
     normalized_available = _normalize_days_strict(
@@ -116,6 +150,9 @@ def build_availability_v1(
         preferred_sessions_per_week=preferred_sessions_per_week,
         long_session_preferred_days=normalized_long,
         effective_from=effective_from,
+        double_session_days=_normalize_days_strict(double_session_days or [], field="double_session_days"),
+        minimum_recovery_hours=minimum_recovery_hours,
+        max_daily_duration_minutes=max_daily_duration_minutes,
     )
 
 
