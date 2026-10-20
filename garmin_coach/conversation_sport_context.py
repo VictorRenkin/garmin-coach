@@ -5,6 +5,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from .config import user_context
+from .history_import import load_history_import
 from .local_activity_history import load_local_activity_history
 from .runtime_context import build_runtime_motionest_context
 from .training_history_summary import _distance_relevant, _duration, _window, sport_classification
@@ -51,6 +52,8 @@ def build_conversation_sport_context(user_id: str) -> dict[str, Any]:
     reference = date.fromisoformat(runtime.reference_date)
     with user_context(user_id):
         activities = load_local_activity_history(start_date=reference - timedelta(days=13), end_date=reference)
+        import_state = load_history_import(detect_stale=False)
+    multisport = runtime.conversation_history.get("source") == "multisport"
     weeks = {}
     for key, start, end in (
         ("last_7_days", reference - timedelta(days=6), reference),
@@ -61,10 +64,13 @@ def build_conversation_sport_context(user_id: str) -> dict[str, Any]:
             "summary": _window(selected, start, end).model_dump(mode="json"),
             "activities": [_project_activity(item) for item in selected],
             "activities_omitted": 0,
+            # Completeness of this local list only, not of the upstream import.
             "activity_list_complete": True,
         }
     payload = {
         "status": "available", "reference_date": runtime.reference_date,
+        "import_status": import_state.get("status") if multisport else None,
+        "import_pagination_complete": import_state.get("pagination_complete") if multisport else None,
         "context": runtime.context.model_dump(mode="json"),
         "history": runtime.conversation_history,
         "weeks": weeks,
