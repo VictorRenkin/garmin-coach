@@ -114,8 +114,7 @@ def _session_delivery_key(fingerprint: str, session_index: int, session: PlanSes
     return _delivery_key(fingerprint, session_index)
 
 
-def _check_calendar_collisions(client: Any, target_date: date, session: PlanSessionV2,
-                               proposal_state: PlanProposalStateV2, store: dict[str, Any], user_id: str, fingerprint: str) -> None:
+def _checked_calendar_entries(client: Any, target_date: date) -> list[dict[str, Any]]:
     getter = getattr(client, "get_scheduled_workouts", None)
     try:
         payload = getter(target_date.year, target_date.month) if callable(getter) else client.connectapi(
@@ -129,6 +128,12 @@ def _check_calendar_collisions(client: Any, target_date: date, session: PlanSess
             date.fromisoformat(_item_date(item) or "")
     except Exception as exc:
         raise GarminDeliveryError("calendar_unavailable", "Le calendrier n'est pas vérifiable ; aucun envoi n'est effectué.") from exc
+    return entries
+
+
+def _check_calendar_collisions(client: Any, target_date: date, session: PlanSessionV2,
+                               proposal_state: PlanProposalStateV2, store: dict[str, Any], user_id: str, fingerprint: str) -> None:
+    entries = _checked_calendar_entries(client, target_date)
     allowed: set[int] = set()
     assert proposal_state.proposal is not None
     for index, candidate in enumerate(proposal_state.proposal.sessions):
@@ -343,6 +348,24 @@ def publish_accepted_session(
             )
         store = _read_store()
         key = _session_delivery_key(fingerprint, session_index, session)
+        previous = store["deliveries"].get(key) or {}
+        # Confirmation of an already requested, unchanged delivery has no remote
+        # effect. A revised sibling may leave an old workout on the same date;
+        # that must still block new scheduling, not this exact confirmation.
+        if (previous.get("workout_id") and previous.get("schedule_requested_at")
+                and previous.get("scheduled_date") == target_date.isoformat()):
+            for event in _checked_calendar_entries(client, target_date):
+                if (event.get("itemType") != "workout"
+                        or str(event.get("workoutId")) != str(previous["workout_id"])
+                        or _item_date(event) != target_date.isoformat()):
+                    continue
+                confirmed = {"calendar_status": "scheduled", "calendar_event_id": event.get("id"), "last_error": None}
+                if any(previous.get(field) != value for field, value in confirmed.items()):
+                    previous.update(confirmed)
+                    previous["updated_at"] = _now()
+                    store["deliveries"][key] = previous
+                    _write_store(store)
+                return _public_record(session, session_index, previous)
         _check_calendar_collisions(client, target_date, session, proposal_state, store, user_id, fingerprint)
         record = store["deliveries"].get(key) or {
             "proposal_fingerprint": fingerprint,
