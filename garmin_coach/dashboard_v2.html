@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#111412">
+  <link rel="icon" href="/favicon.ico" type="image/svg+xml">
   <title>Motionest | Ton coach sportif personnel</title>
   <style>
     :root{--bg:#07110f;--panel:#0c1a17;--panel2:#11231e;--line:#203a32;--text:#f4f7f4;--muted:#9bada6;--cyan:#c9f457;--green:#86dfc2;--orange:#ffad62;--red:#ff6876;--purple:#a990ff;--shadow:0 20px 55px rgba(0,0,0,.28)}
@@ -180,7 +181,7 @@
     if(target)await selectActivity(target); else renderEmptyActivity();state.dashboardDataReady=true;await applyDashboardRoute();$('bootStatus').hidden=true;
   }
   function renderGoal(){const o=state.profile?.objective;if(!o)return;const distance=Number(o.distanceKm)||0,defined=Boolean(String(o.title||'').trim())&&o.title!=='Objectif à définir',confirmedFrequency=Number(state.journey?.planning_decision?.decision?.confirmed_sessions_per_week)||null,preferredFrequency=Number(o.sessionsPerWeek)||null;$('goalTitle').textContent=defined?o.title:'À définir avec le coach';$('goalDistance').textContent=defined&&distance?String(o.distanceKm).replace('.',',')+' km':defined?'En cours':'Non disponible';$('goalFrequency').textContent=confirmedFrequency?confirmedFrequency+' séances validées par semaine':preferredFrequency?preferredFrequency+' séances préférées par semaine':'Fréquence à recommander puis confirmer';const best=state.activities.reduce((m,a)=>Math.max(m,Number(a.distanceKm)||0),0),pct=defined&&distance?Math.min(100,Math.round(best/distance*100)):0;$('goalProgressLabel').textContent=defined&&distance?pct+' %':'Non disponible';$('goalProgressFill').style.width=pct+'%';$('goalProgressDetail').textContent=defined&&distance?(best?best.toFixed(1).replace('.',',')+' km réalisés sur '+String(o.distanceKm).replace('.',',')+' km':'Synchronise une course pour mesurer ta progression.'):defined?'Motionest vérifie maintenant ton historique et tes contraintes.':'';}
-  function renderEmptyActivity(){['statDistance','statPace','statElevation','statCadence','statStride'].forEach(id=>$(id).textContent='Non disponible');$('latestDate').textContent='Aucune course importée';}
+  function renderEmptyActivity(){['statDistance','statPace','statElevation','statCadence','statStride'].forEach(id=>$(id).textContent='Non disponible');$('latestDate').textContent='Aucune course importée';$('zoneList').innerHTML='<div class="empty">Aucune activité importée : zones indisponibles.</div>';}
   async function selectActivity(id,{reveal=false}={}){
     const normalizedId=String(id);
     const a=state.activities.find(x=>String(x.id)===normalizedId);
