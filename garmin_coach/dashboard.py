@@ -1379,7 +1379,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 return
             try:
                 state = get_garmin_delivery_state(user_id)
-            except GarminDeliveryError as exc:
+            except (GarminDeliveryError, PlanProposalError) as exc:
                 _json_response(
                     self,
                     {
