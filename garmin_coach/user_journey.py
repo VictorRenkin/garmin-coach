@@ -48,6 +48,8 @@ def determine_user_stage(user_id: str) -> UserJourneyStage:
 
     with user_context(user_id):
         onboarding = load_onboarding()
+        if onboarding.get("discovery_without_garmin") is True and not stored_tokens_available():
+            return "dashboard"
         status = str(onboarding.get("status") or "not_started")
         if status not in {
             "ready",

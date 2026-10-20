@@ -20,6 +20,8 @@
   <div class="kicker">Motionest</div>
   <h1>Connecte tes données</h1>
   <p>Motionest importe ton historique Garmin pour comprendre factuellement ton activité. Aucun plan ne sera généré ni publié à cette étape.</p>
+  <p>Tu peux aussi découvrir Motionest avec tes déclarations et connecter Garmin plus tard.</p>
+  <button id="continueWithoutGarmin" type="button">Continuer sans Garmin</button>
   <section class="provider">
     <strong>Garmin Connect</strong>
     <form id="garminForm">
@@ -61,6 +63,7 @@
   form.addEventListener('submit',async event=>{event.preventDefault();button.disabled=true;message.classList.remove('error');message.textContent='Connexion sécurisée à Garmin…';try{const response=await fetch('/api/garmin/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:document.getElementById('email').value,password:document.getElementById('password').value,mfaCode:document.getElementById('mfaCode').value,historyScope:scope.value})}),data=await response.json();if(data.mfaRequired){mfa.hidden=false;document.getElementById('mfaCode').required=true;document.getElementById('mfaCode').focus();message.textContent=data.message;return}if(!response.ok)throw new Error(data.message||'Connexion Garmin impossible.');form.reset();mfa.hidden=true;await refresh()}catch(error){message.textContent=error.message;message.classList.add('error')}finally{button.disabled=false}});
   retry.addEventListener('click',async()=>{retry.disabled=true;try{const response=await fetch('/api/garmin/setup-retry',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({historyScope:scope.value})}),data=await response.json();if(!response.ok)throw new Error(data.message||'Nouvelle tentative impossible.');await refresh()}catch(error){message.textContent=error.message;message.classList.add('error')}finally{retry.disabled=false}});
   scope.addEventListener('change',updateScopeNote);updateScopeNote();refresh();
+  document.getElementById('continueWithoutGarmin').addEventListener('click',async event=>{const control=event.currentTarget;control.disabled=true;try{const response=await fetch('/api/onboarding/continue-without-garmin',{method:'POST'}),data=await response.json();if(!response.ok)throw new Error(data.message||'Impossible de continuer.');window.location.assign(data.next)}catch(error){message.textContent=error.message;message.classList.add('error');control.disabled=false}});
 </script>
 </body>
 </html>

@@ -139,6 +139,14 @@ def record_journey_confirmation(field: str, fingerprint: str) -> dict[str, Any]:
         return _write_onboarding(state)
 
 
+def enable_discovery_without_garmin() -> dict[str, Any]:
+    """Record an explicit local choice without changing profile or import state."""
+    with _WRITE_LOCK:
+        state = load_onboarding()
+        state["discovery_without_garmin"] = True
+        return _write_onboarding(state)
+
+
 def load_onboarding() -> dict[str, Any]:
     if not ONBOARDING_FILE.is_file():
         return {"status": "not_started"}
