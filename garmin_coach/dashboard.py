@@ -95,6 +95,7 @@ from .user_accounts import (
 from .user_journey import determine_user_stage
 from .onboarding import (
     complete_onboarding_v2_step,
+    enable_discovery_without_garmin,
     inspect_garmin_account,
     load_onboarding,
     mark_complete,
@@ -630,6 +631,10 @@ def coach_context() -> dict[str, Any]:
             )
     return {
         "objectif": load_objective(),
+        "connexion_sportive": {
+            "garmin_connected": bool(user_id and stored_tokens_available()),
+            "discovery_without_garmin": bool(user_id and not stored_tokens_available() and load_onboarding().get("discovery_without_garmin") is True),
+        },
         "declarations_v1": canonical_inputs,
         "contexte_multisport": multisport_context,
         "etape_parcours": journey.get("stage") if journey else None,
@@ -1003,7 +1008,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     self.send_header("Location", "/dashboard")
                     self.end_headers()
                     return
-                if path == "/connect-garmin" and stage == "dashboard":
+                if path == "/connect-garmin" and stage == "dashboard" and stored_tokens_available():
                     self.send_response(302)
                     self.send_header("Location", "/dashboard")
                     self.end_headers()
@@ -1454,6 +1459,29 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def _do_POST(self) -> None:
         path = urlparse(self.path).path
         if not self._authorize_api(path):
+            return
+        if path == "/api/onboarding/continue-without-garmin":
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if not 0 <= length <= 4096:
+                    raise ValueError("Requête trop volumineuse.")
+                self.rfile.read(length)  # No client-supplied identity is used.
+            except ValueError as exc:
+                _json_response(self, {"ok": False, "message": str(exc)}, 400)
+                return
+            user_id = current_user_id()
+            if not user_id or determine_user_stage(user_id) == "verify_email":
+                _json_response(self, {"ok": False, "message": "Confirme ton compte Motionest avant de continuer."}, 403)
+                return
+            if stored_tokens_available():
+                _json_response(self, {"ok": False, "message": "Garmin est déjà connecté; son parcours reste disponible."}, 409)
+                return
+            enable_discovery_without_garmin()
+            _json_response(self, {"ok": True, "next": "/dashboard"})
+            return
+        if (path in {"/api/sync", "/api/garmin/workout-delivery", "/api/onboarding/plan-decision", "/api/plan/reschedule"}
+                and load_onboarding().get("discovery_without_garmin") is True and not stored_tokens_available()):
+            _json_response(self, {"ok": False, "code": "garmin_not_connected", "message": "Connecte Garmin avant cette action. Ton profil reste conservé."}, 409)
             return
         if path == "/api/logout":
             _json_response(
@@ -2402,6 +2430,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     raise ValueError("Cette proposition a déjà reçu une réponse.")
                 action = answer.get("action")
                 action_onboarding = load_onboarding()
+                if (action_onboarding.get("discovery_without_garmin") is True and not stored_tokens_available()
+                        and action != "update_objective"):
+                    _json_response(self, {"ok": False, "code": "garmin_not_connected", "message": "Connecte Garmin avant une action sur un plan; tes déclarations restent modifiables."}, 409)
+                    return
                 if (
                     action_onboarding.get("onboarding_version") == 2
                     and action in {"create_plan", "update_objective"}
