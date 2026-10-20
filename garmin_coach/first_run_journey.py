@@ -178,6 +178,15 @@ def build_first_run_journey(user_id: str) -> dict[str, Any]:
     """Derive one resumable first-run stage without network or AI calls."""
     with user_context(user_id):
         onboarding = load_onboarding()
+        if onboarding.get("discovery_without_garmin") is True and not stored_tokens_available():
+            return {
+                "schema_version": 1,
+                "stage": "dashboard",
+                "legacy_continuation": False,
+                "discovery_without_garmin": True,
+                "garmin_connected": False,
+                "actions": ["connect_garmin", "save_goal"],
+            }
         if str(onboarding.get("status") or "") in LEGACY_COMPLETE_STATUSES:
             return {
                 "schema_version": 1,
