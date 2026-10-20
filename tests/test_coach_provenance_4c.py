@@ -81,3 +81,36 @@ def test_import_progress_is_scoped_to_the_active_account(monkeypatch):
     bob = sent_payload("bob", monkeypatch)["contexte_multisport"]
     assert (alice["import_status"], alice["import_pagination_complete"]) == ("interrupted", False)
     assert (bob["import_status"], bob["import_pagination_complete"]) == ("complete", True)
+
+
+@pytest.mark.parametrize("provider", ["openai", "compatible"])
+def test_both_model_boundaries_receive_the_local_list_and_import_scope_rules(monkeypatch, provider):
+    from dataclasses import replace
+    from types import SimpleNamespace
+    from garmin_coach import coach_chat
+    from garmin_coach.config import Settings
+    from tests.test_coach_numeric_presentation import context
+    captured = {}
+    response = coach_chat.CoachResponse(message="Données locales observées seulement.")
+    def parse(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(output_parsed=response)
+    def completion(settings, **kwargs):
+        captured.update(kwargs)
+        return response
+    monkeypatch.setattr(coach_chat, "OpenAI", lambda **kwargs: SimpleNamespace(responses=SimpleNamespace(parse=parse)))
+    monkeypatch.setattr(coach_chat, "structured_completion", completion)
+    monkeypatch.setattr(coach_chat, "record_usage", lambda *args, **kwargs: None)
+    settings = Settings(None, None, 300, "synthetic-key", "synthetic-model")
+    if provider == "compatible":
+        settings = replace(settings, ai_base_url="https://synthetic.invalid/v1")
+    source = context()
+    source["contexte_multisport"].update(import_status="interrupted", import_pagination_complete=False)
+    coach_chat.generate_response({"content": "Explique les limites des données observées."}, settings, source)
+    instructions = captured["instructions"]
+    assert "true ne signifie pas que l'import global est termine" in instructions
+    assert "history.scope, scope_cutoff_date" in instructions
+    assert "Un statut absent" in instructions and "ne prouve pas l'absence reelle" in instructions
+    sent = (json.loads(captured["input"]) if provider == "openai" else captured["payload"])["contexte"]
+    assert sent["contexte_multisport"]["import_status"] == "interrupted"
+    assert sent["presentation_numerique"]["summaries"]["contexte_multisport.history.windows.last_28_days"]["observed_duration_seconds"] == 37800

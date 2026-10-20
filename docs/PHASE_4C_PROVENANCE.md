@@ -31,13 +31,17 @@ Les huit cas du nouveau `tests/test_coach_provenance_4c.py` contrôlent import r
 
 Aucun appel IA ou Garmin ni suite complète n'est effectué par cet agent. Les preuves XML sont dans `reports/phase-4c-before.xml`, `phase-4c-targeted.xml` et `phase-4c-confidence-search.xml`, ignorées par Git.
 
-## Consignes conversationnelles à intégrer séquentiellement
+## Consignes conversationnelles intégrées séquentiellement
 
-L'agent 4D est propriétaire de `coach_chat.py` pendant son travail. Ce checkpoint ne modifie donc pas ce fichier simultanément. Après stabilisation 4D, préciser séquentiellement que :
+Après livraison 4D propre `d0b0e38ed757f8ceb7f38ba25c2ceb5fd952e661`, l'orchestrateur a transféré la propriété de `coach_chat.py` à l'agent 4C. Une vraie fusion préservant l'ascendance 4D est réalisée sans conflit, puis les consignes sont complétées séquentiellement pour préciser que :
 
 1. `activity_list_complete` décrit seulement la liste locale affichée; `summary` conserve les totaux locaux observés même lorsque cette liste est tronquée.
 2. `import_status` et `import_pagination_complete` décrivent l'avancement amont; un import terminé reste borné à `history.scope`, cutoff et référence, sans preuve d'enregistrements exhaustifs de la vie sportive.
 3. Une période sans activité locale n'est pas une preuve de repos ou d'absence réelle d'entraînement; null n'est ni zéro ni une estimation.
 4. La recherche ciblée conserve ses propres `coverage_status`, période et source; ne pas remplacer une période demandée par les fenêtres 28/84 jours.
 
-Cette étape de consignes et la validation combinée sont coordonnées par l'orchestrateur; le présent checkpoint de projection ne les annonce pas déjà réalisés. Aucun commit dans `main`, push, changement d'import ou de Garmin. Les sauvegardes et worktrees existants sont préservés.
+Deux régressions supplémentaires inspectent les instructions et champs effectivement fournis aux deux chemins modèle, en conservant les 37 800 secondes et la présentation numérique. Le fichier de provenance contient donc dix cas finaux.
+
+Validation de la combinaison : **162 réussis, 0 échec, 0 ignoré en 27,41 s**, avec `test_coach_provenance_4c.py`, `test_coach_readability_4d.py`, `test_coach_chat.py`, `test_coach_numeric_presentation.py`, `test_conversation_sport_context.py`, `test_conversation_history_search.py` et `test_data_confidence.py`. Les gardes 4D de validation, stockage et réparation fournisseur restent intactes. Preuve : `reports/phase-4cd-targeted.xml`.
+
+La suite complète finale et les éventuels essais IA synthétiques sont coordonnés séparément par l'orchestrateur; aucun résultat complet ou succès conversationnel universel n'est anticipé. La correction rend explicites les preuves et les consignes, sans pouvoir garantir chaque phrase future d'un modèle probabiliste. Aucun commit dans `main`, push, changement d'import ou de Garmin. Les sauvegardes et worktrees existants sont préservés.
