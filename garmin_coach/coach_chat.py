@@ -27,6 +27,31 @@ MESSAGES_FILE = DATA_DIR / "coach_messages.json"
 COACH_DRAFTS_DIR = DATA_DIR / "coach_drafts"
 _LOCK = threading.Lock()
 
+
+def _validate_message_readability(message: str, request_content: str | None = None) -> None:
+    """Reject ambiguous corruption, never guess removed characters or numbers.
+
+    Whitespace used by normal prose and Unicode formatting remain untouched.
+    Literal paragraph escapes are rejected only for the observed prose shape;
+    technical/verbatim contexts remain literal rather than decoded heuristically.
+    """
+    if any((ord(char) < 32 and char not in "\t\n\r") or ord(char) == 127 for char in message):
+        raise ValueError("La réponse du coach contient des caractères de contrôle illisibles.")
+    if request_content is None or r"\n\n" not in message:
+        return
+    technical_request = re.search(
+        r"\\|\b(?:code|json|regex|chemins?|littéral(?:e|es|s)?|litteral(?:e|es|s)?|échappements?|echappements?|backslash)\b",
+        request_content, re.IGNORECASE,
+    )
+    # Do not reinterpret examples, quotations, code, JSON or filesystem paths.
+    verbatim = any(marker in message for marker in ('`', '"', '«', '»', '“', '”', '{', '}')) or re.search(
+        r"[A-Za-z]:\\|\\\\|/[^\s]*\\", message,
+    )
+    if technical_request or verbatim:
+        return
+    if re.search(r"[.!?]\\n\\n[A-ZÀ-ÖØ-Þ]", message):
+        raise ValueError("La réponse du coach contient des séparateurs de paragraphes illisibles.")
+
 HISTORY_SEARCH_INSTRUCTIONS = """
 Le champ recherche_historique contient une lecture locale ciblée des périodes demandées.
 Pour ces périodes, utilise ses synthèses canoniques, jamais les fenêtres 28/84 jours
@@ -137,6 +162,10 @@ class CoachResponse(BaseModel):
 
 
 COACH_CHAT_INSTRUCTIONS = """
+Dans ton message, utilise de vrais retours à la ligne pour séparer les paragraphes,
+pas les séquences littérales \\n\\n. Conserve les échappements uniquement lorsqu'ils
+font partie d'un exemple technique ou d'un contenu littéral demandé. N'insère
+aucun caractère de contrôle invisible dans le texte ni dans les nombres.
 Pour une demande de double journée, distingue une discussion d'une autorisation.
 Retourne action=none et calendar_request avec target_date précise si connue :
 - needs_clarification si la date, les horaires, les jours autorisés, le repos minimal
@@ -539,6 +568,7 @@ def _has_additional_context(content: str) -> bool:
 def _validate_conversation_output(
     response: CoachResponse, request: dict[str, Any], context: dict[str, Any]
 ) -> CoachResponse:
+    _validate_message_readability(response.message, str(request.get("content") or ""))
     content = " ".join(str(request.get("content") or "").split()).casefold()
     for update in response.memory_updates:
         if " ".join(update.source_excerpt.split()).casefold() not in content:
@@ -671,6 +701,7 @@ def generate_response(
             timeout_seconds=60.0,
             max_retries=0,
         )
+        _validate_message_readability(response.message, str(request.get("content") or ""))
         response = _repair_invalid_training_action(
             request=request, response=response, settings=settings, context=context
         )
@@ -947,6 +978,7 @@ def store_response(request_id: str, response: CoachResponse) -> dict[str, Any]:
         )
         if request is None:
             raise ValueError("Demande du coach introuvable.")
+        _validate_message_readability(response.message, str(request.get("content") or ""))
         existing = next(
             (
                 item
