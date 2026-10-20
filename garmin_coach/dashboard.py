@@ -959,6 +959,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             "/",
             "/terms",
             "/privacy",
+            "/favicon.ico",
             "/verify-email",
             "/reset-password",
             "/api/public/auth-config",
@@ -1012,6 +1013,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def _do_GET(self) -> None:
         path = urlparse(self.path).path
         if not self._authorize_api(path):
+            return
+        if path == "/favicon.ico":
+            body = b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="#07110f"/><path d="M6 23V9h4l6 8 6-8h4v14h-4v-8l-6 8-6-8v8z" fill="#c9f457"/></svg>'
+            self.send_response(200)
+            self.send_header("Content-Type", "image/svg+xml")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "public, max-age=86400")
+            self.end_headers()
+            self.wfile.write(body)
             return
         if path == "/":
             body = LANDING_FILE.read_bytes()
