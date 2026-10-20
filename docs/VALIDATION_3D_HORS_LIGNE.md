@@ -65,8 +65,39 @@ anciennes empreintes risquerait de supprimer cette seconde protection.
 Ce défaut est reproduit sur la base 3C, avant combinaison avec 4A. Ce n'est pas
 une régression numérique 4A. Il est transmis à l'orchestrateur et à l'agent A
 pour un correctif applicatif isolé. L'agent C ne modifie aucun fichier applicatif.
-Ce checkpoint **n'est pas une livraison verte** ; la validation après correction
-sera ajoutée sans supprimer, ignorer ou assouplir le test.
+Ce checkpoint historique **n'est pas une livraison verte**. La validation après
+correction ci-dessous conserve le test et toutes ses assertions.
+
+## Validation après correctif isolé
+
+Le correctif applicatif de l'agent A est
+`5230807e17729e127e0d80ea9eeb4e6fbeab2aaa`. La combinaison contient les tests
+de reproduction C (`0f1b369`, transférés par cherry-pick `45c0aab`).
+
+L'agent C a réexécuté indépendamment ses huit cas depuis le worktree combiné
+de l'agent A, sans modifier ses sources : **8 réussis, 0 échec, 0 ignoré**,
+3,78 s, quatre avertissements Pydantic préexistants du SDK.
+
+Commande : `python -m pytest tests/test_complex_double_day_3d.py -q --tb=short
+--junitxml=reports/phase-3d-offline-after-isolated-fix.xml`.
+Le XML est conservé hors suivi dans le worktree
+`motionest-integrate-numeric-4a/garmin-coach-main/reports/`.
+
+Après les contrôles d'identité, d'accord, de date et de sport, le correctif
+reconnaît uniquement une livraison déjà persistée dont le workout exact est
+confirmé à la même date dans un calendrier strictement validé. Cette lecture
+idempotente n'effectue ni upload ni programmation. Les nouveaux effets restent
+soumis aux collisions existantes ; aucune autorisation globale des anciennes
+empreintes n'est ajoutée. Le matin révisé reste bloqué sans nouvel accord et,
+après accord, tant que son ancien workout crée une collision.
+
+La branche C conserve intentionnellement son checkpoint de reproduction et
+reçoit uniquement cet addendum documentaire : elle n'intègre aucun code
+applicatif. Le résultat vert concerne précisément le SHA combiné ci-dessus,
+pas l'ancien arbre applicatif du checkpoint rouge. L'agent A rapporte également
+44 tests ciblés réussis, incluant ces huit cas et quatre gardes complémentaires.
+L'agent C n'a lancé ni suite complète, ni appel IA, ni opération Garmin réelle.
+La réserve distincte ci-dessous reste ouverte.
 
 ## Réserve distincte : accusé d'upload perdu
 
