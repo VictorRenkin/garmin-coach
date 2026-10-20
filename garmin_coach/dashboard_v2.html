@@ -443,13 +443,13 @@
       const response=await fetch(`/api/onboarding/${step}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),data=await response.json();
       if(!response.ok)throw new Error(data.message||'Enregistrement impossible.');
       state.onboarding=data.onboarding;state.motionestInputs=data.motionestInputs;
-      if(step==='goal'&&data.onboarding.status==='ready_for_garmin'){window.location.assign('/connect-garmin');return}
+      if(step==='goal'&&data.onboarding.status==='ready_for_garmin'&&!state.journey?.discovery_without_garmin){window.location.assign('/connect-garmin');return}
       if(step==='subjective-context'){
         const journeyResponse=await fetch('/api/first-run-journey'),journeyPayload=await journeyResponse.json();
         if(!journeyResponse.ok)throw new Error(journeyPayload.message||'Parcours indisponible.');
-        state.journey=journeyPayload.journey||null;$('onboardingDialog').close();renderFirstRunJourney();return;
+        state.journey=journeyPayload.journey||null;$('onboardingDialog').close();if(state.journey?.discovery_without_garmin)await loadAll();else renderFirstRunJourney();return;
       }
-      showOnboardingStep(Math.max(0,onboardingStepNames.indexOf(data.nextStep)));
+      const nextIndex=onboardingStepNames.indexOf(data.nextStep);showOnboardingStep(nextIndex>=0?nextIndex:onboardingStep+1);
     }catch(error){
       const target=step==='goal'?$('goalOnboardingError'):step==='availability'?$('availabilityError'):$('onboardingError');
       target.textContent=error.message||'Enregistrement impossible.';target.focus();
