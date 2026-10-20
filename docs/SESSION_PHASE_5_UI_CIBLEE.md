@@ -27,6 +27,20 @@ sans architecture nouvelle ; aucune démo ne doit polluer un historique réel.
 
 ## Point de reprise
 
+Reprise après interruption de quota, explicitement demandée par l'utilisateur.
+Main reste 9a2c515 et les 27 empreintes originales sont revérifiées identiques.
+C a livré 0777edb2d9a9851af619d3dc97207b71e0eb1534 : favicon public et
+état vide des zones, 50 ciblés réussis, zéro échec/ignoré. Fichiers dashboard
+libérés explicitement puis fusionnés par A à 0149542, après backend 9967e07.
+Le checkpoint A est propre. B reprend tests indépendants et navigateur.
+
+Le banc scripts/validate_discovery_phase5.py a passé cinq simulations sans
+réseau par C : retries=0, profil conservé, conversation 1→3→5 sur le même
+compte objectif/connexion tardive/suivi. Les compteurs simulés ne sont pas des
+tokens réels. Assertions de source et activité 0→1 renforcées ensuite par root;
+nouvelle simulation nécessaire après combinaison. La connexion tardive du banc
+est synthétique (_tokens+seed), pas un essai du service Garmin.
+
 Développements isolés A/C et préparation qualité B en cours. À faire : revue et
 fusion séquentielle C→A, consolidation des tests B, ciblés, navigateur desktop et
 mobile simulé, quelques appels IA synthétiques mesurés, suite complète unique sur
