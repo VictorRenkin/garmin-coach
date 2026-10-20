@@ -188,3 +188,36 @@ sur les mêmes sources/tests figés depuis 20c85c0 :
 reports/phase5-full-confirmation.log et XML associé. Résultat à compléter.
 Les preuves initiales phase5-full.xml/log restent conservées et ne seront pas
 remplacées par ce contrôle. Pas de boucle de relances jusqu'au vert.
+
+## Références de livraison et conservation finale
+
+| Agent / branche | Livraison | Résultat |
+|---|---|---|
+| A codex/motionest-discovery-phase5 | 7c5d254044f01fbe3b6f7173acde78e07841a0bb | parcours et deux corrections bloquantes révélées par B, dernier commit doc seul |
+| B codex/motionest-discovery-quality-5 | adfbb98a50bca1668f2b53e9fb20992249dc8eaf | tests indépendants 8f91bda, navigateur et rapport |
+| C codex/motionest-ui-phase6-fixes | 0777edb2d9a9851af619d3dc97207b71e0eb1534 | favicon/état vide, simulations et revues indépendantes sans autre édition |
+| Root codex/motionest-phase5-integration | code stable 20c85c0, documentation finalisée ensuite | vraie consolidation conservant les ascendances, aucune intégration main |
+
+Revue finale C des deux corrections additionnelles : catch typé limité à l'état
+GET indisponible et trois lignes UI ; utilisateur contrôlé avant lecture, pas
+de succès de publication fabriqué, auth et moteur Garmin inchangés. Aucune
+anomalie bloquante résiduelle identifiée dans le code et le parcours observés.
+
+Main reste propre à 9a2c5159f4b8ed351cf74cf293214938336ead90. Les 39 worktrees
+sont conservés ; seuls les états sales préexistants du checkout original
+(16 entrées Git) et du design (une entrée) restent présents. Les 27 SHA256
+originaux sont identiques, quatre archives CRC valides, variante
+04aece083b9e307fa38aba94feab7ea417e00877 accessible. Inventaire ignoré :
+reports/phase5-final-worktrees.json. Aucun fichier sites/ ou mobile-app/ modifié.
+Les sources applicatives, tests et scripts sont inchangés depuis le lancement
+des suites complètes ; seules les preuves documentaires ont été ajoutées ensuite.
+
+## Prochaines décisions proposées, non exécutées
+
+Revoir la branche combinée et ses réserves avant toute intégration locale.
+La démonstration interactive nécessite une autorisation et un périmètre isolé
+distincts. Une future amélioration conversationnelle peut cibler la complétude
+des réponses de suivi sans remettre en chantier les conversions 4A. Le mobile
+natif et la stabilisation générale des abandons HTTP Windows ne sont pas livrés
+par cette mission. Aucun push, appel Garmin réel, nouveau connecteur, générateur
+ou mécanisme de reprise permanent. Arrêt après résultats finaux ci-dessous.
