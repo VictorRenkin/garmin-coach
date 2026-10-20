@@ -164,3 +164,27 @@ Métriques canoniques, fenêtres, imports/stockages sportifs, contrats 3B/3C,
 conversions 4A, gardes 4C/4D et moteur Garmin strictement inchangés par Git.
 Contrôles de périmètre et motifs de secrets : reports/phase5-scope-check.json.
 Aucun nouveau secret réel observé dans les ajouts; les jetons des tests sont fictifs.
+
+## Suite complète : échec de transport conservé et contrôle borné
+
+Première exécution : **1 068 réussis, 1 échec, 0 erreur, 0 ignoré**, 268,82 s,
+quatre avertissements SDK Pydantic préexistants. Le test existant
+test_dashboard.py::test_coach_status_and_config_http_endpoints_do_not_return_key
+échoue par ConnectionAbortedError WinError 10053 pendant getresponse/read_status
+du POST anonyme /api/coach/config. Le GET de statut avait passé son assertion.
+L'assertion HTTP 401 du POST n'a pas été atteinte : ce n'est ni une preuve de
+fuite de clé ni un résultat d'autorisation incorrect démontré.
+
+Reproduction ciblée séquentielle, sans délais artificiels ou retry dans les
+tests : même test sur branche combinée **1 réussi** (4,92 s), puis contrôle
+sur main 9a2c515 **1 réussi** (4,70 s). Code du test et traitement de ces routes
+non modifiés par phase 5. L'erreur de transport est cohérente avec les abandons
+Windows déjà observés, mais ces passes isolées n'établissent pas une cause
+réseau exacte ni une garantie de stabilité future. Aucune modification de
+l'authentification, du serveur ou d'assertions pour cacher l'échec.
+
+Un seul contrôle complet supplémentaire est autorisé par cette anomalie,
+sur les mêmes sources/tests figés depuis 20c85c0 :
+reports/phase5-full-confirmation.log et XML associé. Résultat à compléter.
+Les preuves initiales phase5-full.xml/log restent conservées et ne seront pas
+remplacées par ce contrôle. Pas de boucle de relances jusqu'au vert.
