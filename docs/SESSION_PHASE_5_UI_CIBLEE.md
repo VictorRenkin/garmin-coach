@@ -25,7 +25,7 @@ connexion Garmin ultérieure préservant les déclarations et la mémoire. Route
 protégées et consentement Garmin conservés. Démo optionnelle seulement si isolable
 sans architecture nouvelle ; aucune démo ne doit polluer un historique réel.
 
-## Point de reprise
+## Checkpoints de reprise, travaux désormais terminés
 
 Reprise après interruption de quota, explicitement demandée par l'utilisateur.
 Main reste 9a2c515 et les 27 empreintes originales sont revérifiées identiques.
@@ -41,10 +41,10 @@ tokens réels. Assertions de source et activité 0→1 renforcées ensuite par r
 nouvelle simulation nécessaire après combinaison. La connexion tardive du banc
 est synthétique (_tokens+seed), pas un essai du service Garmin.
 
-Développements isolés A/C et préparation qualité B en cours. À faire : revue et
-fusion séquentielle C→A, consolidation des tests B, ciblés, navigateur desktop et
-mobile simulé, quelques appels IA synthétiques mesurés, suite complète unique sur
-code combiné stable, contrôle secrets/diff/statuts et rapport final.
+Le checkpoint initial prévoyait développements A/C, consolidation qualité B,
+ciblés, navigateur, IA et suite complète. Ces travaux sont terminés et détaillés
+ci-dessous ; la suite de confirmation supplémentaire est justifiée uniquement
+par l'échec de transport observé dans la première suite.
 Ne pas rejouer les validations précédentes ; aucun appel Garmin réel, push,
 suppression, reset destructif ou mécanisme permanent de relance.
 
@@ -121,8 +121,9 @@ B a rejoué le chemin réel après fix : objectif POST 200 → disponibilités �
 subjectif/préférences → Terminer → dialogue fermé → dashboard rechargé.
 La préférence est persistée, découverte toujours active, bandeau visible et
 sync masquée. Console fraîche sans erreur ni avertissement sur ce chemin.
-La suite complète unique est lancée sur le code combiné stable 20c85c0,
-reports/phase5-full.log et reports/phase5-full.xml ; résultat final à compléter.
+La première suite complète a été exécutée sur le code combiné stable 20c85c0,
+reports/phase5-full.log et reports/phase5-full.xml ; son échec de transport et
+la confirmation bornée sont détaillés ci-dessous.
 
 ## Navigateur final et démonstration
 
@@ -185,7 +186,8 @@ l'authentification, du serveur ou d'assertions pour cacher l'échec.
 
 Un seul contrôle complet supplémentaire est autorisé par cette anomalie,
 sur les mêmes sources/tests figés depuis 20c85c0 :
-reports/phase5-full-confirmation.log et XML associé. Résultat à compléter.
+reports/phase5-full-confirmation.log et XML associé : **1 069 réussis,
+0 échec, 0 erreur, 0 ignoré**, 247,31 s, quatre avertissements Pydantic existants.
 Les preuves initiales phase5-full.xml/log restent conservées et ne seront pas
 remplacées par ce contrôle. Pas de boucle de relances jusqu'au vert.
 
@@ -221,3 +223,28 @@ des réponses de suivi sans remettre en chantier les conversions 4A. Le mobile
 natif et la stabilisation générale des abandons HTTP Windows ne sont pas livrés
 par cette mission. Aucun push, appel Garmin réel, nouveau connecteur, générateur
 ou mécanisme de reprise permanent. Arrêt après résultats finaux ci-dessous.
+
+
+## Clôture finale
+
+| Validation | Réussis | Échecs | Erreurs | Ignorés |
+|---|---:|---:|---:|---:|
+| Première suite complète | 1 068 | 1 | 0 | 0 |
+| Test HTTP isolé, branche combinée | 1 | 0 | 0 | 0 |
+| Même test, main de référence | 1 | 0 | 0 | 0 |
+| Suite complète de confirmation, mêmes sources | 1 069 | 0 | 0 | 0 |
+
+Les 18 cas nouveaux (8 backend découverte, 8 qualité indépendante, 2 UI ciblés)
+expliquent le passage exact de 1 051 à 1 069. La dernière suite inclut sécurité,
+isolation, Garmin simulé, dashboard/onboarding, import/dédoublonnage, contrats
+complexes et doubles journées. Les quatre warnings de dépendance persistent.
+Aucune assertion n'a été retirée ou assouplie ; aucun code de transport n'a changé.
+Le caractère intermittent observé ne constitue pas une cause Windows démontrée.
+
+Livraison prête pour revue sur codex/motionest-phase5-integration, avec réserve
+qualitative du suivi IA et incident HTTP initial conservés. Aucun blocage produit
+résiduel reproduit dans le périmètre contrôlé. Sources/tests/scripts identiques
+à 20c85c0 ; seules des preuves documentaires ont évolué pendant la validation.
+Main reste 9a2c515 propre ; aucun push ou Garmin réel. Les trois branches des
+agents et les sauvegardes restent accessibles. Mission terminée, aucune suite
+de développement ou intégration automatique n'est lancée.
