@@ -123,3 +123,44 @@ La préférence est persistée, découverte toujours active, bandeau visible et
 sync masquée. Console fraîche sans erreur ni avertissement sur ce chemin.
 La suite complète unique est lancée sur le code combiné stable 20c85c0,
 reports/phase5-full.log et reports/phase5-full.xml ; résultat final à compléter.
+
+## Navigateur final et démonstration
+
+B livré : tests 8f91bda, rapport documentaire adfbb98a50bca1668f2b53e9fb20992249dc8eaf.
+Ces livraisons et l'addendum A 7c5d254 sont fusionnés, uniquement documents après
+stabilisation. Voir QUALITE_PHASE_5_DECOUVERTE.md pour les preuves ignorées et
+le détail des deux reproductions rouges puis corrections.
+
+Skill playwright-cli réutilisé après consultation de la bibliothèque locale.
+Vrai DashboardHandler, vrais cookies/comptes synthétiques et endpoints : aucun
+contournement d'authentification dans cette validation. Huit observations
+(home/week/activities/coach en 1440×900 et 390×844), zéro pageerror et zéro
+débordement horizontal pour les états mesurés. Opt-in, édition des trois étapes,
+sauvegarde/préférence persistée, rechargement, lien de connexion tardive et retour
+au dashboard réussis. Compte Garmin existant : dashboard/profil accessibles,
+bandeau découverte absent et bouton sync présent. Aucune activité importée
+automatiquement. Favicon 200 et zones vides explicites. Console fraîche finale :
+zéro erreur/avertissement. Des abandons Windows 10053 pendant les navigations
+rapides restent documentés, sans réécriture de l'authentification.
+Navigateur et serveur jetable fermés. Chromium étroit ne valide pas Expo natif.
+
+La démonstration interactive facultative n'est pas livrée : il n'existe pas de
+namespace isolé, marquage permanent, politique de sortie/effacement et garde de
+publication pour des données de démonstration. Les créer serait un chantier
+distinct. Les données synthétiques présentes ici restent des fixtures temporaires
+de validation, jamais le contenu d'un historique d'utilisateur réel.
+
+## Fichiers et composants réutilisés
+
+Sources : onboarding.py (choix explicite), user_journey.py et first_run_journey.py
+(étapes existantes), dashboard.py (routes existantes protégées et contexte),
+connect_garmin.html et dashboard_v2.html (vues/formulaire/coach existants).
+Tests : test_discovery_phase5.py, test_discovery_phase5_quality.py et
+test_ui_phase6_fixes.py. Banc : scripts/validate_discovery_phase5.py.
+Docs : CORRECTIONS_UI_PHASE_6.md, PHASE_5_SANS_GARMIN.md,
+QUALITE_PHASE_5_DECOUVERTE.md et ce rapport.
+
+Métriques canoniques, fenêtres, imports/stockages sportifs, contrats 3B/3C,
+conversions 4A, gardes 4C/4D et moteur Garmin strictement inchangés par Git.
+Contrôles de périmètre et motifs de secrets : reports/phase5-scope-check.json.
+Aucun nouveau secret réel observé dans les ajouts; les jetons des tests sont fictifs.
