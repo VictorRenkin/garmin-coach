@@ -196,4 +196,3 @@ def test_empty_success_advances_date_without_fabricating_activities():
         state = history_import.load_history_import(detect_stale=False)
         assert state["latest_sync_date"] == date.today().isoformat()
         assert local_activity_history.load_local_activity_history() == []
-
