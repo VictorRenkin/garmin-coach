@@ -96,3 +96,25 @@ sendSessionToGarmin(0,{disabled:false,textContent:'stale button'}).then(()=>cons
 '''
     result=subprocess.run([shutil.which('node'),'-e',script],capture_output=True,encoding='utf-8',check=True)
     assert json.loads(result.stdout)=={'pending':0}
+
+def test_direct_journey_render_binds_new_cards_without_full_dashboard_reload():
+    html=dashboard.TEMPLATE_FILE.read_text(encoding='utf-8')
+    functions='\n'.join(re.search(r'  function '+name+r'\(.*',html).group(0)
+        for name in ('showJourneyProduct','bindPlanSessionActions'))
+    script='''
+let buttons=[],calls=0;
+const content={set innerHTML(value){buttons=[{dataset:{sessionId:'morning',sessionDecision:'accepted'},closest:()=>({querySelector:()=>({})})}]},querySelector:()=>null};
+const dialog={open:false,showModal(){this.open=true}};
+const $=id=>id==='journeyContent'?content:dialog,setJourneyPhase=()=>{};
+const document={querySelectorAll:selector=>selector==='[data-session-decision]'?buttons:[]};
+const decidePlanProposalV2=()=>{calls++};
+'''+functions+'''
+for(let n=0;n<2;n++){
+ showJourneyProduct('<new cards>',{planPhase:true});
+ if(typeof buttons[0].onclick!=='function')throw Error('direct render lost session consent handler');
+ buttons[0].onclick();
+}
+console.log(JSON.stringify({calls}));
+'''
+    result=subprocess.run([shutil.which('node'),'-e',script],capture_output=True,encoding='utf-8',check=True)
+    assert json.loads(result.stdout)=={'calls':2}
