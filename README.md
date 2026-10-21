@@ -34,7 +34,9 @@ L’application fonctionne sur ton ordinateur et s’ouvre dans le navigateur. L
 
 ### 1. Installer
 
-Prérequis : **Python 3.11 ou plus récent**, un compte Garmin Connect et Windows 10/11.
+Prérequis : **Python 3.11 ou plus récent** et Windows 10/11. Le compte Motionest
+est distinct de Garmin ; un compte Garmin Connect est facultatif pour découvrir
+l'application sans historique.
 
 ```powershell
 git clone https://github.com/VictorRenkin/garmin-coach.git
@@ -43,7 +45,14 @@ python -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-### 2. Connecter Garmin
+### 2. Connecter Garmin (facultatif)
+
+Pour commencer sans Garmin, passe directement à l'étape 3, crée ton compte
+Motionest et choisis le parcours de découverte après avoir renseigné ton profil.
+Tu pourras connecter Garmin ensuite depuis ce parcours sans perdre tes déclarations
+ni ta conversation. Aucune activité de démonstration n'est ajoutée à ton compte.
+
+Pour une connexion Garmin depuis la ligne de commande :
 
 ```powershell
 .\connexion-garmin.cmd
@@ -57,9 +66,12 @@ L’adresse, le mot de passe et l’éventuel code de vérification sont demand�
 .\ouvrir-dashboard.cmd
 ```
 
-Le navigateur s’ouvre sur [http://127.0.0.1:8765](http://127.0.0.1:8765). Clique sur **Actualiser et analyser** pour importer tes courses.
+Le navigateur s'ouvre sur [http://127.0.0.1:8765](http://127.0.0.1:8765).
+Sans Garmin, le dashboard présente ton profil et un historique vide. Avec Garmin
+connecté, le bouton **Actualiser et analyser** permet d'importer tes activités.
 
-À ce stade, le suivi, les statistiques et les actions Garmin fonctionnent déjà sans clé API.
+L'import et les actions Garmin demandent une connexion Garmin explicite, mais
+pas de clé IA. Le coach conversationnel nécessite un fournisseur IA configuré.
 
 ## Ce qui fonctionne selon ta configuration
 
@@ -156,7 +168,9 @@ aucune séance n'est envoyée vers une montre.
 - Le projet cible aujourd’hui Windows et la course à pied.
 - La montre doit avoir synchronisé l’activité avec Garmin Connect avant l’import.
 - L’intégration s’appuie sur une interface Garmin Connect non officielle et peut nécessiter une adaptation si Garmin la modifie.
-- L’application est conçue pour un usage personnel et local ; elle ne fournit ni comptes multiples ni hébergement cloud.
+- L'application dispose de comptes Motionest et d'espaces locaux isolés par utilisateur.
+  Son lancement par défaut reste local ; les tests locaux ne valident pas à eux
+  seuls un hébergement public, la délivrance des e-mails ou la compatibilité Garmin réelle.
 
 ---
 
