@@ -57,3 +57,9 @@ Preuves locales ignorées : `reports/web6-matrix-output.json`, `reports/web6-rev
 Fichiers : `garmin_coach/dashboard_v2.html`, `tests/test_web_ui_phase6.py`, ce rapport. Aucune refonte, aucun changement d’import, contrat sportif, générateur ou métrique. Aucun push, aucune modification de `main`, aucune suppression de sauvegarde.
 
 Le rapprochement automatique d’un upload inconnu reste hors de cette correction UI. L’absence de débordement aux tailles testées ne constitue pas une validation sur téléphone physique. La suite consolidée et les tests d’isolation globaux sont rapportés séparément par l’orchestrateur.
+
+### Addendum — rendu direct après l’éditeur
+
+L’orchestrateur a signalé une seconde entrée qui ne passe pas par `loadAll` : après l’éditeur d’un compte Garmin, `renderFirstRunJourney()` est appelé directement. La fonction `showJourneyProduct` recrée alors les cartes et perd leur liaison, même après la correction du chargement initial. Reproduction Node avec les fonctions de production, deux rendus consécutifs : 1 échec / 7 réussites avant correction. La correction ajoute simplement `bindPlanSessionActions()` immédiatement après l’insertion HTML dans `showJourneyProduct`. Le même test confirme deux décisions possibles après deux rendus directs, sans rechargement complet ni effet cumulatif de listeners.
+
+Validation ciblée actualisée : **10 réussis, 0 échec, 0 ignoré, 4 avertissements SDK en 5,20 s**, soit huit nouvelles régressions et deux existantes. Aucun nouveau navigateur ou appel distant n’a été nécessaire pour cette hypothèse précise. Cette validation remplace le total de neuf tests indiqué avant cet addendum.
