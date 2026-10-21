@@ -63,3 +63,20 @@ Le rapprochement automatique d’un upload inconnu reste hors de cette correctio
 L’orchestrateur a signalé une seconde entrée qui ne passe pas par `loadAll` : après l’éditeur d’un compte Garmin, `renderFirstRunJourney()` est appelé directement. La fonction `showJourneyProduct` recrée alors les cartes et perd leur liaison, même après la correction du chargement initial. Reproduction Node avec les fonctions de production, deux rendus consécutifs : 1 échec / 7 réussites avant correction. La correction ajoute simplement `bindPlanSessionActions()` immédiatement après l’insertion HTML dans `showJourneyProduct`. Le même test confirme deux décisions possibles après deux rendus directs, sans rechargement complet ni effet cumulatif de listeners.
 
 Validation ciblée actualisée : **10 réussis, 0 échec, 0 ignoré, 4 avertissements SDK en 5,20 s**, soit huit nouvelles régressions et deux existantes. Aucun nouveau navigateur ou appel distant n’a été nécessaire pour cette hypothèse précise. Cette validation remplace le total de neuf tests indiqué avant cet addendum.
+
+### Addendum — intégration réelle Handler / garde C / interface B
+
+Arbre combiné contrôlé : `51c9735b79e9980f852d32156aa594bb25c64253` (A `05096e7`, C `6c27f9d`, B `b454010`). Le worktree B propre a avancé par fast-forward vers cet arbre avant le contrôle.
+
+Nouvelle preuve bornée à 390 pixels, sans réponses HTTP de livraison simulées : vrai `DashboardHandler`, vraie session signée, proposition complexe conservée dans le store réel et accord individuel du matin par POST réel. La seule connexion Garmin est remplacée par un `CapturingClient` existant : l’upload appelle le comportement factice qui crée l’objet, puis lève `TimeoutError` pour simuler la perte de réponse. Le stade de parcours et l’entrée de génération restent des fixtures explicites comme précédemment.
+
+Résultats :
+
+- Premier POST livraison réellement traité : **409**, attesté par le journal réseau navigateur.
+- GET réel : `garmin_connect_status=unknown`, `upload_status=uncertain`, ID workout et événement `null`, calendrier `not_scheduled`, message public générique sans détail privé de l’exception.
+- La carte devient « Création incertaine », zéro bouton d’envoi ; état inchangé après rechargement complet, aucun débordement à 390 pixels.
+- Deux tentatives API forcées supplémentaires traversent les vraies routes et n’entraînent aucune seconde connexion. La dernière réponse capturée est **409 `upload_uncertain`**. Compteurs finaux du même client : **1 connexion, 1 upload, 0 programmation**, pour trois POST de livraison au total.
+
+Limite de l’instrumentation conservée : le premier script a tenté de récupérer le corps CDP du premier POST après un rechargement, alors que cette ressource n’était plus disponible ; Playwright a renvoyé `Network.getResponseBody: No resource with given identifier found`. Ce défaut du banc n’est pas une erreur de l’application. Les actions précédentes, dont le premier retry, avaient déjà été exécutées. Une sonde de lecture et un dernier retry API ont capturé le JSON public et le refus ci-dessus, sans recommencer l’upload ni rejouer la matrice. Le log réseau conserve le premier statut 409. La console relue après rechargement contient zéro message ; cela ne nie pas le statut HTTP 409 initial attendu.
+
+Preuves locales ignorées : `reports/web6-combined-requests.txt`, `reports/web6-combined-read.txt`, `reports/web6-combined-retry.txt`, `reports/web6-real-metrics.json` et serveur/scripts associés. Aucun fichier applicatif ou test n’a changé pour ce contrôle supplémentaire. Aucun appel IA ou Garmin réel. Serveur synthétique arrêté, navigateur `motionest-web6-combined` fermé. La suite complète reste à la charge de l’orchestrateur.
