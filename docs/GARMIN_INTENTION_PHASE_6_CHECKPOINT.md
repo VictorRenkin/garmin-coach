@@ -90,6 +90,16 @@ Pydantic préexistants. Deux assertions finales renforcent ensuite projection
 après révision et reprise d'ID confirmé malgré intention legacy.
 Module final après renforcement : 19 réussis, zéro échec/ignoré, 6,63 s.
 
+Revue root complémentaire : la projection d'une intention retrouvée par identité
+ou prudence legacy ne recopie plus date, événement ou statut calendrier de
+l'ancienne séance. Seuls marqueur d'incertitude et horodatage sont projetés ;
+message générique « Un précédent envoi Garmin reste incertain ». Le record
+d'origine reste inchangé. Deux régressions couvrent date étrangère et identité
+legacy/révisée. Passe livraison + 3D + module : 39 réussis, 11,99 s.
+Une chaîne numérique de 5 000 chiffres reste également une erreur typée
+`workout_id_missing`, sans fuite de ValueError ni renvoi. Dernière passe du
+module après cette garde : 22 réussis, zéro échec/ignoré, 6,71 s.
+
 Limites explicites : anciennes tentatives sans record indétectables ; retries
 internes du SDK/transport non prouvés ; verrou RLock intra-processus uniquement ;
 atomicité de remplacement fichier sans garantie fsync/coupure d'alimentation.

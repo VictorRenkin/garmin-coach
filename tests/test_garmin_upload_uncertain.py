@@ -45,7 +45,7 @@ def test_unknown_upload_cannot_be_created_twice(lost_reply, pair):
     assert error.value.code == "upload_uncertain"
 
 
-@pytest.mark.parametrize("identifier", [None, True, False, 0, -1, 1.5, "", "bad", "1.0", "-1", "١"])
+@pytest.mark.parametrize("identifier", [None, True, False, 0, -1, 1.5, "", "bad", "1.0", "-1", "١", pytest.param("9" * 5000, id="oversized-integer")])
 def test_invalid_upload_ids_leave_uncertainty_without_schedule(pair, identifier):
     class InvalidId(CapturingClient):
         def upload_running_workout(self, workout):
@@ -159,3 +159,21 @@ def test_uncertain_intent_is_scoped_to_account_and_legacy_is_conservative(pair):
         assert delivery._read_store()["deliveries"] == {}
         session = pair.read().proposal.sessions[0]
         assert delivery._uncertain_upload(delivery._read_store(), session, "other-key") is None
+
+
+@pytest.mark.parametrize("identity", [None, "morning"])
+def test_fallback_intent_never_attributes_old_calendar_facts_to_current_session(pair, identity):
+    approve(pair, "morning")
+    session = pair.read().proposal.sessions[0]
+    old = {"session_id": identity, "upload_requested_at": "2099-09-01T08:00:00+02:00",
+           "scheduled_date": "2099-09-01", "calendar_status": "scheduled",
+           "calendar_event_id": 999, "last_error": "PRIVATE provider detail"}
+    with config.user_context(pair.user):
+        delivery._write_store({"schema_version": 1, "deliveries": {"old-revision-or-legacy": old}})
+    projected = delivery.get_garmin_delivery_state(pair.user)["sessions"][0]
+    assert projected["scheduled_date"] == session.date.isoformat()
+    assert projected["calendar_status"] == "not_scheduled"
+    assert projected["garmin_calendar_event_id"] is None and projected["garmin_workout_id"] is None
+    assert projected["garmin_connect_status"] == "unknown"
+    assert "précédent envoi" in projected["last_error"] and "PRIVATE" not in projected["last_error"]
+    assert stored_delivery(pair)["deliveries"]["old-revision-or-legacy"] == old

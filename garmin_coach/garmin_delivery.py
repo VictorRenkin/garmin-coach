@@ -287,7 +287,7 @@ def _public_record(
         "watch_sync_status": "unverified",
         "structured_blocks_exported": bool(workout_id),
         "instructions_exported": False,
-        "last_error": "Création Garmin incertaine ; aucun nouvel envoi avant vérification." if uncertain else value.get("last_error"),
+        "last_error": "Un précédent envoi Garmin reste incertain ; aucun nouvel envoi avant vérification." if uncertain else value.get("last_error"),
         "updated_at": value.get("updated_at"),
         "session_id": session.session_id,
         "starts_at": session.starts_at.isoformat() if session.starts_at else None,
@@ -325,6 +325,19 @@ def assert_upload_retry_safe(user_id: str, *, session_index: int, expected_sessi
             raise GarminDeliveryError("upload_uncertain", "Création Garmin incertaine ; aucun nouvel envoi avant vérification.")
 
 
+def _current_public_record(store: dict[str, Any], session: PlanSessionV2, index: int, key: str) -> dict[str, Any]:
+    uncertain = _uncertain_upload(store, session, key)
+    exact = store["deliveries"].get(key)
+    if uncertain is not None and uncertain is not exact:
+        # A revised/legacy intent proves a retry is unsafe, not that its remote
+        # identity, date or calendar facts belong to this current session.
+        return _public_record(session, index, {
+            "upload_requested_at": uncertain["upload_requested_at"],
+            "updated_at": uncertain.get("updated_at"),
+        })
+    return _public_record(session, index, uncertain or exact)
+
+
 def get_garmin_delivery_state(user_id: str) -> dict[str, Any]:
     """Read local facts only. Dashboard refreshes never call Garmin."""
     with user_context(user_id):
@@ -335,10 +348,11 @@ def get_garmin_delivery_state(user_id: str) -> dict[str, Any]:
             "status": "available",
             "proposal_fingerprint": fingerprint,
             "sessions": [
-                _public_record(
+                _current_public_record(
+                    store,
                     session,
                     index,
-                    _uncertain_upload(store, session, _session_delivery_key(fingerprint, index, session)) or store["deliveries"].get(_session_delivery_key(fingerprint, index, session)),
+                    _session_delivery_key(fingerprint, index, session),
                 )
                 for index, session in enumerate(proposal_state.proposal.sessions)
             ],
@@ -455,13 +469,17 @@ def publish_accepted_session(
             except Exception as exc:
                 raise GarminDeliveryError("upload_uncertain", "Création Garmin incertaine ; aucun nouvel envoi avant vérification.") from exc
             candidate = uploaded.get("workoutId") if isinstance(uploaded, dict) else None
-            if (isinstance(candidate, bool) or not isinstance(candidate, (int, str))
-                    or not str(candidate).isascii() or not str(candidate).isdigit() or int(candidate) <= 0):
+            try:
+                workout_id = (int(candidate) if not isinstance(candidate, bool)
+                              and isinstance(candidate, (int, str))
+                              and str(candidate).isascii() and str(candidate).isdigit() else None)
+            except (ValueError, OverflowError):
+                workout_id = None
+            if workout_id is None or workout_id <= 0:
                 raise GarminDeliveryError(
                     "workout_id_missing",
                     "Garmin n'a pas confirmé d'identifiant valide ; création incertaine, aucun nouvel envoi avant vérification.",
                 )
-            workout_id = int(candidate)
             record.update(
                 {
                     "workout_id": int(workout_id),
