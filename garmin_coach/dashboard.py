@@ -1781,10 +1781,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/garmin/connect":
             user_id = current_user_id()
-            if not user_id or determine_user_stage(user_id) not in {
+            stage = determine_user_stage(user_id) if user_id else None
+            discovery_connection = (stage == "dashboard" and load_onboarding().get("discovery_without_garmin") is True
+                                    and not stored_tokens_available())
+            if not user_id or (not discovery_connection and stage not in {
                 "connect_garmin",
                 "import_failed",
-            }:
+            }):
                 _json_response(
                     self,
                     {"ok": False, "message": "Termine d’abord l’étape Motionest en cours."},
