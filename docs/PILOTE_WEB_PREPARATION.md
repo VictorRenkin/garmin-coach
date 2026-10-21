@@ -7,8 +7,8 @@ Branche de préparation : `codex/motionest-pilot-preparation`, isolée de main.
 Mission du 21 octobre 2026 : réserves restantes, preuves manquantes et correction
 locale reproduite ; aucune reconstruction des phases 1 à 6.
 
-Verdict candidat : **prêt sous conditions pour un pilote Web encadré**. Ce verdict
-sera confirmé après la suite complète. Il ne signifie ni ouverture publique,
+Verdict final : **prêt sous conditions pour un pilote Web encadré**. Les ciblés
+et la suite complète passent. Ce verdict ne signifie ni ouverture publique,
 ni validation Garmin réelle, ni démonstration automatique ajoutée au produit.
 
 Le périmètre minimal proposé est un petit groupe accompagné, parcours sans
@@ -17,6 +17,13 @@ comptes avec Garmin restent validés par simulation uniquement. Ce périmètre d
 être accepté avant lancement ; aucun participant recruté, compte réel créé,
 serveur public ouvert, appel IA payant ou effet Garmin réalisé ici.
 
+Ce périmètre sans Garmin est une consigne de pilote accompagné, pas un nouveau
+mode produit qui désactive techniquement le connecteur. Le lien de connexion
+tardive existe toujours. Les fakes sont ceux des tests, pas une simulation
+installée pour les participants. Si une interdiction technique de tout accès
+Garmin est requise, la définir avant lancement dans une mission distincte ;
+aucun drapeau ou sandbox de connecteur n'est ajouté implicitement ici.
+
 ## Checklist à critères objectifs
 
 Les statuts distinguent preuve de code, preuve synthétique et preuve d'exploitation.
@@ -24,7 +31,7 @@ Une simulation réussie ne clôture pas un critère exigeant un service réel.
 
 | ID | Critère de passage | État et preuve disponible | Condition avant pilote |
 |---|---|---|---|
-| P01 | Branche candidate propre, ascendance main, diff limité, ciblés et suite complète sans échec | Base vérifiée ; ciblés root 159 réussis ; suite complète en cours | Clôturer les résultats et relire le diff avant décision d'intégration |
+| P01 | Branche candidate propre, ascendance main, diff limité, ciblés et suite complète sans échec | Acquis : ciblés root 159 réussis, suite complète 1 113 réussis, diff limité et revue indépendante | Décision d'intégration séparée ; aucune intégration automatique |
 | P02 | Inscription, vérification, login/logout et routes privées traversés avec vraies sessions | Acquis en HTTP synthétique : `PARCOURS_WEB_PHASE_6.md`, tests sécurité ; transmissions e-mail/anti-robot simulées | Pour accès distant, prouver les e-mails et Turnstile dans l'environnement choisi |
 | P03 | Sans Garmin : onboarding, préférences, profil, dashboard et coach sans historique accessibles | Preuves HTTP et navigateur phases 5/6, historique vide sans seed ; comptes séparés | Expliquer les données absentes et configurer le fournisseur IA si chat réel inclus |
 | P04 | Connexion Garmin tardive simulée ne perdant ni profil ni conversation, reprise après erreur | Quatre nouveaux cas HTTP : MFA 409, auth 401, service 503, limitation 429, puis soumission explicite 202 | Ne pas présenter cette preuve comme authentification Garmin réelle validée |
@@ -158,7 +165,7 @@ traces expurgées et diagnostiquer ; ne pas réessayer une création Garmin ince
 | A parcours | codex/motionest-pilot-web-journeys | a8336edee1eaa5912b93a6aff7f76fe3634afe9d | 4 tests HTTP réussis, aucun backend modifié |
 | B résolution | codex/motionest-pilot-uncertain-spec | bf2c55106391dc4bee573f57c16876f1702a4ee8 | Spécification seule, tests antérieurs réutilisés sans prétendre une preuve distante |
 | C qualité | codex/motionest-pilot-web-quality | 23364472626d786ba12637bb9ad4dc196fe70d5e | 12 ciblés réussis, dont 2 nouveaux ; un catch UI |
-| Root | codex/motionest-pilot-preparation | Code combiné afadd9ba10d95b25d5b87f902eb4050c12374b55 | 159 ciblés réussis ; suite complète en cours |
+| Root | codex/motionest-pilot-preparation | Code combiné afadd9ba10d95b25d5b87f902eb4050c12374b55 | 159 ciblés et 1 113 complets réussis |
 
 Revue indépendante A de la correction C et du README sur afadd9ba : aucun
 blocage ; aucun changement de `dashboard.py` ou `garmin_delivery.py`, aucun retry
@@ -175,3 +182,59 @@ En cas d'interruption, reprendre à partir des SHA et journaux conservés, sans
 rejouer les étapes validées. Aucun mécanisme de relance permanent créé ; un arrêt
 complet ne garantit aucune reprise automatique. Aucun accès ni changement natif,
 appel Garmin réel, IA payante, nouveau connecteur, générateur, push ou suppression.
+
+## Clôture technique
+
+| Campagne | Réussis | Échecs / erreurs | Ignorés | Durée |
+|---|---:|---:|---:|---:|
+| A, nouveaux raccordements HTTP | 4 | 0 / 0 | 0 | 5,10 s |
+| C, régressions UI et non-régressions existantes | 12 | 0 / 0 | 0 | 3,05 s |
+| Root, ciblés combinés | 159 | 0 / 0 | 0 | 51,98 s |
+| Root, suite complète | 1 113 | 0 / 0 | 0 | 243,83 s |
+
+Ces campagnes se recouvrent : ne pas additionner leurs totaux. Six cas nouveaux
+(quatre A, deux C) expliquent exactement le passage de 1 107 à 1 113. Les deux
+échecs de caractérisation avant correction sont attendus et conservés dans le
+rapport C ; aucun échec final masqué, test ignoré ou assertion métier affaiblie.
+Une seule suite complète finale, aucun incident 10053 dans cette exécution ;
+quatre warnings Pydantic du SDK préexistants. La cause de l'intermittence
+historique reste inconnue, sa non-réapparition n'en prouve pas la disparition.
+
+Commande complète : interpréteur `.venv/Scripts/python.exe` existant du checkout
+original, `-m pytest -q --junitxml=reports/pilot-full.xml`, dans le worktree de
+préparation. Code testé au SHA afadd9ba10d95b25d5b87f902eb4050c12374b55.
+Les commits suivants ne changent que ce rapport ; diff applicatif/tests depuis
+ce checkpoint vide. Pas de raison de répéter la suite après ces seuls ajouts.
+
+Huit fichiers livrés : README.md ; les quatre documents PILOTE_WEB_PREPARATION,
+PILOTE_WEB_PARCOURS, PILOTE_WEB_QUALITE, PILOTE_RESOLUTION_GARMIN_INCERTAINE ;
+garmin_coach/dashboard_v2.html ; tests/test_pilot_web_journeys.py et
+tests/test_pilot_web_quality.py. Le seul changement applicatif est le catch UI.
+Backend, authentification, import/synchronisation, calculs, générateurs, contrats
+et livraison Garmin sont identiques à main. Recherche ciblée de motifs de clés
+privées, tokens OpenAI/GitHub et revue du diff : aucun secret réel identifié.
+Il ne s'agit pas d'un audit général de sécurité.
+
+Main avant/après : **839fd052d610445bad4c71e771a26524deb1cafb**, propre.
+Main reste ancêtre de la branche candidate ; aucune intégration effectuée.
+Le commit final de la branche de préparation contient cette clôture.
+`git diff --check` conforme. Les trois branches agents et les anciennes branches
+restent accessibles, y compris codex/motionest-web6-integration et son rapport
+séparé codex/motionest-web6-integration-report à 97213fa220361e3c29f7904db20c215d26f5c0cd.
+
+Les 42 worktrees sont conservés, sans nouveau worktree ajouté ou ancien supprimé.
+Le worktree de préparation et les trois agents sont propres après livraison.
+Les modifications préexistantes restent intactes : checkout original détaché
+à 68c704a (16 entrées Git), design à 1a2d28b (une entrée Git). Les 24 empreintes
+hors natif et les quatre archives valides sont conservées ; variante historique
+04aece0 toujours accessible. Inventaire détaillé : `reports/pilot-final.json`.
+`reports/pilot-resume.json` donne le statut terminé et les décisions restantes.
+
+Les revues documentaires finales B/C valident le caractère conditionnel et la
+séparation entre preuves locales, exploitation et Garmin réel. Aucun nouveau
+blocage applicatif reproduit dans les scénarios examinés après correction.
+Les critères P09/P10/P12 et, selon le périmètre, P02/P11 restent à clôturer avant
+de vrais participants : le code validé ne remplace pas ces preuves d'exploitation.
+Le pilote n'est pas lancé par cette mission. Zéro appel IA payant et zéro appel
+Garmin réel ; aucune exposition publique, accès natif, push ou relance permanente.
+Arrêt après préparation et livraison isolée.
