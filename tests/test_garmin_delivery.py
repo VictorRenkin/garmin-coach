@@ -257,9 +257,17 @@ def test_dashboard_delivery_routes_keep_the_four_states_explicit(
         "get_garmin_delivery_state",
         lambda user_id: {"status": "available", "sessions": [delivery]},
     )
-    monkeypatch.setattr(dashboard, "connect", lambda settings: object())
+    boundary_order = []
+    monkeypatch.setattr(dashboard, "assert_upload_retry_safe", lambda *args, **kwargs: boundary_order.append("preflight"))
+    def connect(settings):
+        assert boundary_order == ["preflight"]
+        boundary_order.append("connect")
+        return object()
+    monkeypatch.setattr(dashboard, "connect", connect)
 
     def publish(user_id, client, **kwargs):
+        assert boundary_order == ["preflight", "connect"]
+        boundary_order.append("publish")
         calls.append({"user_id": user_id, **kwargs})
         return delivery
 
@@ -290,6 +298,7 @@ def test_dashboard_delivery_routes_keep_the_four_states_explicit(
         with urllib.request.urlopen(post_request, timeout=5) as response:
             post_payload = json.loads(response.read())
         assert post_payload["delivery"]["calendar_status"] == "scheduled"
+        assert boundary_order == ["preflight", "connect", "publish"]
         assert calls == [
             {
                 "user_id": "route_user",

@@ -174,3 +174,40 @@ def test_registration_verification_login_onboarding_discovery_and_logout_use_rea
     logout = browser("/api/logout", cookie=cookie, method="POST")
     assert logout[0] == 200 and "Max-Age=0" in logout[1]["Set-Cookie"]
     assert browser("/api/profile")[0] == 401
+
+
+@pytest.mark.parametrize("lost_reply", ["missing_id", "timeout"])
+def test_uncertain_http_retry_is_stopped_before_a_second_garmin_connection(server, isolated, monkeypatch, lost_reply):
+    from garmin_coach import plan_proposal
+    from tests.test_calendar_3c import source_for, double_proposal
+    from tests.test_plan_proposal import settings
+    from tests.test_garmin_delivery import VerifiedClient
+    source = source_for("alice")
+    proposal = double_proposal(source)
+    monkeypatch.setattr(plan_proposal, "build_plan_generation_input_v2", lambda *args, **kwargs: source)
+    monkeypatch.setattr(plan_proposal, "load_settings", settings)
+    monkeypatch.setattr(plan_proposal.ai_provider, "structured_completion", lambda *args, **kwargs: proposal)
+    generated = request(server, "/api/plan-proposal/generate", user="alice", method="POST")[2]
+    current = request(server, "/api/plan-proposal", user="alice")[2]
+    assert request(server, "/api/plan-proposal/decision", user="alice", method="POST", payload={
+        "session_id": "morning", "decision": "accepted", "input_fingerprint": generated["input_fingerprint"],
+        "proposal_fingerprint": current["proposal_fingerprint"]})[0] == 200
+    class LostReplyClient(VerifiedClient):
+        def upload_running_workout(self, workout):
+            super().upload_running_workout(workout)
+            if lost_reply == "timeout":
+                raise TimeoutError("Synthetic private response lost")
+            return {}
+    client = LostReplyClient()
+    connections = []
+    monkeypatch.setattr(dashboard, "connect", lambda *args: connections.append("explicit-connect") or client)
+    body = {"session_index": 0, "session_id": "morning"}
+    first = request(server, "/api/garmin/workout-delivery", user="alice", method="POST", payload=body)
+    assert first[0] == 409
+    assert first[2]["code"] == ("workout_id_missing" if lost_reply == "missing_id" else "upload_uncertain")
+    retry = request(server, "/api/garmin/workout-delivery", user="alice", method="POST", payload=body)
+    assert retry[0] == 409 and retry[2]["code"] == "upload_uncertain"
+    assert connections == ["explicit-connect"] and client.uploads == 1 and client.schedules == []
+    public = request(server, "/api/garmin/workout-delivery", user="alice")[2]["sessions"][0]
+    assert public["upload_status"] == "uncertain" and public["garmin_workout_id"] is None
+    assert "private" not in public["last_error"]
