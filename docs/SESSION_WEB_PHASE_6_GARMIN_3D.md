@@ -45,15 +45,15 @@ est une preuve du défaut, pas le contrat final attendu. Aucun app modifié à c
 A a reproduit avant correction un nouveau trou du vrai parcours HTTP :
 discovery opt-in puis GET connexion 200, mais POST connexion tardive 409 car
 la garde n'accepte pas stage=dashboard en découverte. Aucun client réel appelé.
-Correction backend minimale et régression avec profil/conversation préservés en cours.
+Correction backend minimale livrée, avec régression de conservation du profil et
+de la conversation.
 
-## Point de reprise
+## Méthode de consolidation
 
-Terminer les parcours A/B, protection C et leurs régressions, consolider uniquement
-les corrections prouvées, revue indépendante et secrets, contrôles navigateurs
-pertinents puis suite complète sur le code stable. Les vrais appels IA ne sont
-pas nécessaires sans nouvelle hypothèse conversationnelle ; fournisseurs simulés
-pour les parcours. Aucun résultat de test final n'est anticipé ici.
+Les parcours A/B, la protection C et leurs régressions sont consolidés par fusions
+locales sur la branche isolée. Les vrais appels IA ne sont pas nécessaires sans
+nouvelle hypothèse conversationnelle ; fournisseurs simulés pour les parcours.
+Les résultats finaux et le point de reprise figurent en clôture ci-dessous.
 Conserver SHA/branches et preuves en cas d'interruption ; pas de relance permanente.
 
 ## Livraisons consolidées
@@ -93,6 +93,10 @@ de deux rendus successifs. Dix ciblés finaux réussis, dont huit nouveaux et de
 régressions antérieures favicon/zones ; syntaxe JavaScript valide.
 Rapport : PHASE_6_INTERFACE_WEB.md.
 
+Complément documentaire navigateur B : 5abd544adf81aefa1875856e959b8d05f096a93b,
+fusionné par 4fdb1f2cef600182ebd192dc17d77494afa78b65. Aucun fichier applicatif
+ou test modifié après le lancement de la suite complète au checkpoint 6f15a36.
+
 Les fusions sont réelles, sans cherry-pick en double. Tests combinés root :
 **97 réussis, zéro échec, erreur ou ignoré**, 35,67 s, quatre avertissements SDK
 Pydantic préexistants. Preuves : reports/web6-combined-targeted.xml et log.
@@ -101,6 +105,55 @@ aussi le nouveau boundary, avec assertion d'ordre preflight→connect→publish.
 Les tests métier de réponse perdue utilisent le vrai helper ; aucun garde n'est
 neutralisé. Deux attentes 3D visent désormais l'écriture d'ID plutôt que celle
 de l'intention, et vérifient l'intention persistée après ID absent.
+
+## Revue indépendante et contrôle navigateur combiné
+
+A a relu la livraison C consolidée : intention avant POST, ID confirmé persisté
+avant programmation, garde HTTP avant connexion, accords unitaires et isolation
+préservés. Aucun blocage reproductible identifié ; limites explicites ci-dessous.
+
+B a contrôlé le vrai Handler A avec le publisher C et l'interface B à 390 px :
+session signée, accord individuel par POST réel, puis client Garmin factice créant
+l'objet avant TimeoutError. Aucune réponse HTTP de livraison n'est remplacée.
+Le POST réel renvoie 409 et le GET réel unknown/uncertain sans ID ; l'interface
+affiche « Création incertaine », sans bouton de renvoi, y compris après recharge.
+Deux POST supplémentaires forcés restent refusés : au total une connexion,
+un upload fictif, zéro programmation. Aucun correctif supplémentaire requis.
+
+Une récupération CDP du corps après rechargement a échoué dans le banc ; le statut
+409 initial reste enregistré et une sonde bornée capture le JSON et le refus
+suivant sans recommencer l'upload. Ce défaut d'instrumentation n'est pas attribué
+à l'application. Serveur et navigateur fermés. Le rapport B garde les preuves.
+
+Les contrôles antérieurs à 1440, 390 et 320 px couvrent les cartes complexes,
+horaires et accords/refus en modale : pas de débordement ni erreur JavaScript
+nouvelle sur ces scénarios. Favicon et zones vides sont vérifiés sans réfection.
+Cela ne constitue pas une validation de tous les navigateurs ou appareils.
+
+## Périmètre des fichiers et confidentialité
+
+Douze fichiers livrés :
+
+- Application : garmin_coach/dashboard.py, garmin_coach/dashboard_v2.html,
+  garmin_coach/garmin_delivery.py.
+- Régressions ajoutées : tests/test_web_journey_phase6.py,
+  tests/test_web_ui_phase6.py, tests/test_garmin_upload_uncertain.py.
+- Fixtures/attentes existantes adaptées : tests/test_garmin_delivery.py,
+  tests/test_complex_double_day_3d.py, avec assertions métier conservées.
+- Documentation : ce rapport, docs/PARCOURS_WEB_PHASE_6.md,
+  docs/PHASE_6_INTERFACE_WEB.md, docs/GARMIN_INTENTION_PHASE_6_CHECKPOINT.md.
+
+Aucun autre fichier applicatif n'est modifié : historique et fenêtres 28/84,
+imports/synchronisation, conversions 4A, provenance/lisibilité, contrats des blocs,
+doubles journées et générateurs restent ceux de main. Le contexte IA et ses
+budgets ne changent pas. Aucun historique fictif n'est injecté dans un compte réel.
+
+Relecture du diff et recherche ciblée de clés privées/tokens OpenAI/GitHub : aucun
+secret réel identifié. Les transports des parcours utilisent des comptes, tokens
+et réponses synthétiques ; aucune donnée de compte réel n'est publiée. Le statut
+incertain expose un message statique, pas l'exception privée du transport. Les
+tests d'isolation existants et nouveaux conservent les espaces Alice/Bob séparés.
+Cette vérification ciblée ne remplace pas un audit général de sécurité.
 
 ## Limites de sécurité explicitement conservées
 
@@ -116,3 +169,64 @@ est intra-processus ; ni concurrence entre processus, ni fsync/coupure électriq
 ni retries internes du SDK/transport, ni exactly-once serveur ne sont garantis.
 La nouvelle garantie est le blocage applicatif observé hors ligne et persisté,
 pas une compatibilité Garmin, une preuve sur montre ou un engagement distant.
+
+## Validation finale et clôture
+
+| Validation | Réussis | Échecs / erreurs | Ignorés | Durée |
+|---|---:|---:|---:|---:|
+| Root ciblée combinée | 97 | 0 / 0 | 0 | 35,67 s |
+| Root suite complète | 1 107 | 0 / 0 | 0 | 271,24 s |
+
+Commande complète : `.venv/Scripts/python.exe -m pytest -q --junitxml=reports/web6-full.xml`
+avec l'interpréteur du checkout original. Le journal est reports/web6-full.log ;
+XML et logs restent locaux, ignorés par Git. Une seule exécution complète sur le
+code final, sans incident HTTP intermittent ni relance complète. Quatre warnings
+PydanticDeprecatedSince20 du SDK garminconnect préexistants, sans nouveau warning
+applicatif constaté. Les 38 nouveaux cas expliquent le passage de 1 069 à 1 107.
+
+La suite a démarré à 6f15a361fb511e9fae4fdcfc79ad1c0c5de94cac. Les commits
+suivants ne changent que la documentation ; `git diff 6f15a36 -- garmin_coach tests`
+est vide. Le code effectivement livré est donc celui de la suite et du contrôle
+navigateur combiné, pas seulement celui d'une branche d'agent antérieure.
+
+Main avant et après : **ee41c9e822c79060afa837f7f66c6db08e69dbf9**, propre,
+arbre 67e911a29633bb92d2f46a345fcd4a7b8cc983e3, ancêtre de la livraison.
+Aucun fast-forward vers main exécuté. Branche livrée :
+**codex/motionest-web6-integration** ; son commit final contient cette clôture.
+`git diff --check` ne relève aucune erreur. Aucun conflit de fusion restant.
+
+Inventaire final : 42 worktrees conservés. Le worktree de consolidation et les
+trois worktrees A/B/C sont propres après livraison ; main et les autres anciens
+worktrees de validation sont propres. Les deux états préexistants restent intacts :
+checkout original détaché à 68c704a (16 entrées Git locales) et design à 1a2d28b
+(une entrée locale). Les 24 empreintes originales hors natif sont identiques.
+Les quatre archives ont de nouveau passé leur contrôle CRC ; aucune supprimée.
+La référence et le worktree historique restent à
+04aece083b9e307fa38aba94feab7ea417e00877. Le précédent rapport phase 5 reste
+accessible sur codex/motionest-phase5-integration-report à c6cca28337b1cfbf151a9c244afc032b14d07272.
+L'inventaire détaillé branches/SHA/statuts et les preuves de protection sont dans
+reports/web6-final-worktrees.json et reports/web6-preflight.json.
+
+Zéro appel IA applicatif payant, zéro token IA applicatif consommé durant cette
+mission ; providers synthétiques pour les tests. Aucun compte Garmin réel,
+upload distant, synchronisation réelle ou push. Aucun accès au contenu natif,
+développement Expo ou mécanisme de relance permanent.
+
+## Reprise proposée, sans exécution automatique
+
+La branche isolée est prête pour revue et décision d'intégration séparée. Ne pas
+rejouer les développements ni cherry-picker à nouveau A/B/C. En cas d'autorisation
+ultérieure d'intégration, revérifier main propre, son ascendance et l'identité des
+sources testées avant tout fast-forward local. Préserver les branches historiques.
+
+Le seul travail futur Garmin proposé est de spécifier une résolution explicite et
+vérifiable de l'incertitude ; contrôler Garmin Connect ne débloque pas aujourd'hui
+l'état applicatif. Aucun parcours de déblocage, recherche/adoption, effacement ou
+retry automatique n'est implémenté. Les limites SDK, processus et compatibilité
+réelle restent ouvertes. Les transporteurs e-mail/anti-robot/IA et les appareils
+réels ne sont pas validés par ces parcours synthétiques.
+
+La fin de la pièce jointe n'a pas été reçue au moment de cette clôture : seule la
+mission effectivement disponible est traitée. Aucune instruction manquante n'a
+été reconstituée. Arrêt après livraison ; aucune intégration main ni nouvelle
+phase n'est engagée.
