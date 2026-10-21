@@ -58,6 +58,7 @@ from .garmin import (
 from .garmin_setup import setup_status, start_initial_setup
 from .garmin_delivery import (
     GarminDeliveryError,
+    assert_upload_retry_safe,
     get_garmin_delivery_state,
     publish_accepted_session,
 )
@@ -1781,10 +1782,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/garmin/connect":
             user_id = current_user_id()
-            if not user_id or determine_user_stage(user_id) not in {
+            stage = determine_user_stage(user_id) if user_id else None
+            discovery_connection = (stage == "dashboard" and load_onboarding().get("discovery_without_garmin") is True
+                                    and not stored_tokens_available())
+            if not user_id or (not discovery_connection and stage not in {
                 "connect_garmin",
                 "import_failed",
-            }:
+            }):
                 _json_response(
                     self,
                     {"ok": False, "message": "Termine d’abord l’étape Motionest en cours."},
@@ -2098,6 +2102,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                             raise GarminDeliveryError("session_identity_conflict", "L'identité exacte de la séance est requise.")
                         if get_plan_acceptance_state(user_id, proposal_state=proposal_state, session_id=selected.session_id).status != "accepted":
                             raise GarminDeliveryError("session_not_accepted", "Valide explicitement cette séance avant son envoi.")
+                assert_upload_retry_safe(user_id, session_index=session_index,
+                    expected_session_id=str(body["session_id"]) if body.get("session_id") is not None else None)
                 delivery = publish_accepted_session(
                     user_id,
                     connect(load_settings()),
