@@ -148,7 +148,8 @@ def test_interruption_after_upload_id_persistence_resumes_without_a_second_uploa
 
     def persist_then_interrupt(store):
         original_write(store)
-        raise RuntimeError("Synthetic process interruption after committed upload ID")
+        if any(record.get("workout_id") for record in store["deliveries"].values()):
+            raise RuntimeError("Synthetic process interruption after committed upload ID")
 
     with monkeypatch.context() as scoped:
         scoped.setattr(delivery, "_write_store", persist_then_interrupt)
@@ -225,4 +226,5 @@ def test_upload_without_confirmed_id_never_schedules_or_claims_created_workout(p
         send(pair, client, 0)
     assert error.value.code == "workout_id_missing"
     assert client.uploads == 1 and client.schedules == []
-    assert stored_delivery(pair)["deliveries"] == {}
+    record = next(iter(stored_delivery(pair)["deliveries"].values()))
+    assert record["upload_requested_at"] and not record.get("workout_id")

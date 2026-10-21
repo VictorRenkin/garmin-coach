@@ -271,6 +271,7 @@ def _public_record(
     workout_id = value.get("workout_id")
     calendar_event_id = value.get("calendar_event_id")
     calendar_status = value.get("calendar_status") or "not_scheduled"
+    uncertain = bool(value.get("upload_requested_at") and not workout_id)
     return {
         "session_index": session_index,
         "session_date": session.date.isoformat(),
@@ -278,18 +279,50 @@ def _public_record(
         "sport": session.sport,
         "supported": session.sport == "running",
         "motionest_status": "saved",
-        "garmin_connect_status": "created" if workout_id else "not_created",
+        "garmin_connect_status": "created" if workout_id else "unknown" if uncertain else "not_created",
+        "upload_status": "confirmed" if workout_id else "uncertain" if uncertain else "not_requested",
         "garmin_workout_id": workout_id,
         "calendar_status": calendar_status,
         "garmin_calendar_event_id": calendar_event_id,
         "watch_sync_status": "unverified",
         "structured_blocks_exported": bool(workout_id),
         "instructions_exported": False,
-        "last_error": value.get("last_error"),
+        "last_error": "Création Garmin incertaine ; aucun nouvel envoi avant vérification." if uncertain else value.get("last_error"),
         "updated_at": value.get("updated_at"),
         "session_id": session.session_id,
         "starts_at": session.starts_at.isoformat() if session.starts_at else None,
     }
+
+
+def _uncertain_upload(store: dict[str, Any], session: PlanSessionV2, key: str) -> dict[str, Any] | None:
+    if (store["deliveries"].get(key) or {}).get("workout_id"):
+        return None  # A confirmed current ID never requires a new upload.
+    for record in store["deliveries"].values():
+        if not isinstance(record, dict) or not record.get("upload_requested_at") or record.get("workout_id"):
+            continue
+        # Legacy records have no stable identity: no new creation can safely be
+        # attributed to a different session. Never guess from a name or a date.
+        if session.session_id is None or record.get("session_id") is None or record.get("session_id") == session.session_id:
+            return record
+    return None
+
+
+def assert_upload_retry_safe(user_id: str, *, session_index: int, expected_session_id: str | None = None) -> None:
+    """Local preflight usable before constructing a connected Garmin client.
+
+    publish_accepted_session repeats the check under the same process lock.
+    This does not replace its consent, identity, date, sport or collision guards.
+    """
+    with user_context(user_id), _WRITE_LOCK:
+        state, fingerprint = _accepted_proposal(user_id)
+        assert state.proposal is not None
+        if not 0 <= session_index < len(state.proposal.sessions):
+            raise GarminDeliveryError("session_not_found", "Séance introuvable.")
+        session = state.proposal.sessions[session_index]
+        if expected_session_id is not None and session.session_id != expected_session_id:
+            raise GarminDeliveryError("session_identity_conflict", "L'identité de la séance affichée a changé.")
+        if _uncertain_upload(_read_store(), session, _session_delivery_key(fingerprint, session_index, session)):
+            raise GarminDeliveryError("upload_uncertain", "Création Garmin incertaine ; aucun nouvel envoi avant vérification.")
 
 
 def get_garmin_delivery_state(user_id: str) -> dict[str, Any]:
@@ -305,7 +338,7 @@ def get_garmin_delivery_state(user_id: str) -> dict[str, Any]:
                 _public_record(
                     session,
                     index,
-                    store["deliveries"].get(_session_delivery_key(fingerprint, index, session)),
+                    _uncertain_upload(store, session, _session_delivery_key(fingerprint, index, session)) or store["deliveries"].get(_session_delivery_key(fingerprint, index, session)),
                 )
                 for index, session in enumerate(proposal_state.proposal.sessions)
             ],
@@ -348,6 +381,8 @@ def publish_accepted_session(
             )
         store = _read_store()
         key = _session_delivery_key(fingerprint, session_index, session)
+        if _uncertain_upload(store, session, key):
+            raise GarminDeliveryError("upload_uncertain", "Création Garmin incertaine ; aucun nouvel envoi avant vérification.")
         previous = store["deliveries"].get(key) or {}
         # Confirmation of an already requested, unchanged delivery has no remote
         # effect. A revised sibling may leave an old workout on the same date;
@@ -412,13 +447,21 @@ def publish_accepted_session(
                 return _public_record(session, session_index, record)
         else:
             workout = build_plan_session_workout(session)
-            uploaded = client.upload_running_workout(workout)
-            workout_id = uploaded.get("workoutId") if isinstance(uploaded, dict) else None
-            if not workout_id:
+            record.update({"upload_requested_at": _now(), "updated_at": _now()})
+            store["deliveries"][key] = record
+            _write_store(store)  # If this fails, no upload is attempted.
+            try:
+                uploaded = client.upload_running_workout(workout)
+            except Exception as exc:
+                raise GarminDeliveryError("upload_uncertain", "Création Garmin incertaine ; aucun nouvel envoi avant vérification.") from exc
+            candidate = uploaded.get("workoutId") if isinstance(uploaded, dict) else None
+            if (isinstance(candidate, bool) or not isinstance(candidate, (int, str))
+                    or not str(candidate).isascii() or not str(candidate).isdigit() or int(candidate) <= 0):
                 raise GarminDeliveryError(
                     "workout_id_missing",
-                    "Garmin n'a pas confirmé la création de l'entraînement.",
+                    "Garmin n'a pas confirmé d'identifiant valide ; création incertaine, aucun nouvel envoi avant vérification.",
                 )
+            workout_id = int(candidate)
             record.update(
                 {
                     "workout_id": int(workout_id),
