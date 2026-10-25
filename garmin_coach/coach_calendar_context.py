@@ -115,6 +115,14 @@ def grounded_v2_calendar_response(content: str, context: dict) -> str | None:
         "enlev", "decal", "avanc", "retard", "augment", "diminu", "remplac", "replan", "ecourt",
     )):
         return None
+    read_requested = bool(re.search(
+        r"\b(?:quels?|quelles?|consulter|consulte|affiche|afficher|montre|detaille|recapitule)\b"
+        r"|\bj['’]ai\s+quoi\b|\b(?:dis|rappelle)[ -]moi\b"
+        r"|^\s*(?:ma|mes|la|les)\s+seances?\b.*\?\s*$",
+        plain,
+    ))
+    if not read_requested:
+        return None
     calendar = context.get("calendrier_plan_v2")
     if not isinstance(calendar, dict):
         return None  # Preserve the historical reader when V2 is not projected.

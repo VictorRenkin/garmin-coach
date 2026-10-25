@@ -182,3 +182,12 @@ def test_seven_verbose_sessions_fit_coach_message_without_losing_essential_slots
     for i in range(7):
         assert f"identité {i}." in text
     assert text.count("35 min") == 7
+
+
+@pytest.mark.parametrize("prompt", [
+    "Je débute la course et je voudrais deux séances de 30 minutes le 13 octobre 2099 à 08h00+02:00 et 16h00+02:00. Est-ce adapté à ma situation ?",
+    "Prépare exactement deux séances de course facile de 30 minutes chacune.",
+    "Je voudrais deux séances mardi, est-ce adapté ?",
+])
+def test_calendar_suitability_or_creation_is_not_intercepted_as_a_read(projected, prompt):
+    assert answer(projected(), prompt) is None
