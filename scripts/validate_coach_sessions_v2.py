@@ -84,7 +84,8 @@ def main():
                 if name == "move":
                     recent = [{"role": "user", "content": "Je parle de la séance evening de mardi 27 octobre à 18h."}]
                 if name == "evening":
-                    recent = [{"role": "assistant", "content": "Mardi comporte morning à 08h et evening à 18h. Laquelle ?"}]
+                    recent = [{"role": "user", "content": "Je veux raccourcir la séance de mardi à 25 minutes."},
+                              {"role": "assistant", "content": "Mardi comporte morning à 08h et evening à 18h. Laquelle ?"}]
                 if name == "cancel":
                     recent = [{"role": "assistant", "content": "Brouillon local en attente pour evening ; aucun effet avant confirmation."}]
                 context = {"calendrier_plan_v2": active_calendar, "conversation_recente": recent,
@@ -101,7 +102,7 @@ def main():
                 try:
                     response = structured_completion(configured,
                         instructions=coach_chat.COACH_CHAT_INSTRUCTIONS + "\n" + coach_chat.HISTORY_SEARCH_INSTRUCTIONS,
-                        payload=payload, result_type=coach_chat.CoachResponse, quality="economy",
+                        payload=payload, result_type=coach_chat.CoachResponse, quality="deep",
                         reasoning_effort="none", category="coach_v2_probe", timeout_seconds=60,
                         max_retries=0, max_output_tokens=900)
                     output = response.model_dump(mode="json")
