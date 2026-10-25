@@ -189,3 +189,44 @@ def test_activity_imported_after_preview_blocks_confirmation_without_erasing_act
     assert error.value.code=='session_completed_or_ambiguous'
     assert protected_files(user)==before
     assert activity=={'activityId':'synthetic-completed','duration':1800,'sport':'running'}
+
+
+def unidentified_state(scenario):
+    user,source,state=scenario
+    with config.user_context(user):
+        store,_=plan_proposal._read_store()
+        raw=store.proposal.model_dump(mode='json')
+        for item in raw['sessions']:item.update(session_id=None,starts_at=None)
+        raw['sessions'][1]['date']='2099-10-17'
+        proposal=plan_proposal.PlanProposalV2.model_validate(raw)
+        assert plan_proposal.validate_plan_proposal(proposal,source).valid
+        plan_proposal._write_store(store.model_copy(update={'proposal':proposal}))
+    return user,source,state
+
+
+def test_unidentified_v2_sessions_remain_consultable_without_legacy_fallback(scenario,monkeypatch):
+    from garmin_coach import coach_calendar_context,coach_chat
+    user,_,state=unidentified_state(scenario)
+    monkeypatch.setattr(coach_calendar_context,'get_plan_proposal_state',lambda uid:state())
+    before=protected_files(user)
+    calendar=coach_calendar_context.build_coach_calendar_context(user)
+    assert calendar['status']=='available' and len(calendar['sessions'])==2
+    assert all(item.get('session_id') is None for item in calendar['sessions'])
+    response=coach_chat._grounded_current_plan_response('Quelles sont mes séances cette semaine ?',
+        {'calendrier_plan_v2':calendar,'plan_actif':{'seances':[{'titre':'LEGACY_SENTINEL','date':'2099-10-13'}]}})
+    assert response is not None and '35 min' in response.message and '30 min' in response.message
+    assert 'LEGACY_SENTINEL' not in response.message
+    assert protected_files(user)==before
+
+
+def test_unidentified_v2_cannot_be_mutated_with_missing_or_invented_identity(scenario):
+    user,_,_=unidentified_state(scenario)
+    before=protected_files(user)
+    with config.user_context(user):
+        path=config.DATA_DIR/'coach_session_actions_v1.json'
+        assert not path.exists()
+    for identity in (None,'morning'):
+        with pytest.raises(actions.SessionActionError):
+            actions.prepare_session_action(user,dict(action='modify',session_id=identity,target_duration_minutes=25))
+    assert protected_files(user)==before
+    with config.user_context(user):assert not (config.DATA_DIR/'coach_session_actions_v1.json').exists()

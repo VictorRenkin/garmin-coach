@@ -94,3 +94,18 @@ pytest tests/test_coach_session_actions_quality.py tests/test_coach_session_acti
 L’échec concerne `test_anonymous_and_unconfirmed_direct_route_have_no_effect`, lors du POST anonyme JSON sur confirmation : `HTTPConnection.getresponse/read_status` lève `ConnectionAbortedError / WinError 10053` avant l’assertion 401. Une seule reproduction isolée autorisée : **1 échec, 0 réussite, 4 avertissements en 2,87 s**, même étape de transport. Aucun statut d’autorisation incorrect ni mutation n’est démontré par ces échecs. Le refus précoce d’une requête dont le corps n’est pas consommé est un contexte pertinent pour le reset Windows ; la cause système exacte n’est pas prouvée.
 
 Aucune assertion, authentification ou fixture root n’a été modifiée par C pour cacher cet incident. Aucune boucle de relance. Un contrôle sans corps, s’il est retenu par l’orchestrateur, doit être distingué de ces échecs de transport et conserver la preuve initiale. La validation finale root, les scénarios IA et le vrai parcours navigateur restent rapportés séparément ; les 33 passes core précédentes ne sont pas une suite assemblée entièrement verte.
+
+## Compatibilité : propositions V2 sans identité de séance
+
+`PlanSessionV2.session_id` est optionnel. Les doubles journées imposent leurs identités par validation, mais une proposition simple dont toutes les séances ont `session_id=None` reste valide. La présence d’un calendrier V2 ne garantit donc pas que chaque séance soit modifiable par le nouveau parcours.
+
+Deux cas supplémentaires vérifient cette limite sans changement de contrat :
+
+- Une proposition réelle stockée de deux séances simples, mardi 35 minutes et samedi 30 minutes, sans IDs : projection disponible, consultation déterministe correcte, aucun repli sur un ancien plan contradictoire et aucun changement des stores.
+- La même proposition : préparation de mutation sans identité ou avec une identité inventée refusée, aucun plan/accord/livraison modifié, aucun journal de brouillon créé. Aucun appariement par indice ou identité synthétisée depuis date/contenu.
+
+Validation : **21 tests qualité réussis, 0 échec, 0 ignoré, quatre avertissements SDK en 4,21 s**, dont ces deux cas. Cette exécution n’inclut pas les tests HTTP intermittents précédents, dont les échecs restent conservés ci-dessus.
+
+Minimum compatible livré : conserver la lecture des séances sans ID et refuser leur mutation ciblée, avec une explication de la nécessité d’une identité stable. Ne pas promettre une prise en charge universelle de toutes les anciennes propositions V2. Aucune migration, réécriture silencieuse, adoption d’ID ou repli sur le moteur legacy. Le produit ne reçoit aucun mapping automatique dans cette livraison.
+
+Évolution minimale à décider séparément si l’on souhaite lever cette limite : garantir explicitement des identités stables aux futures propositions, puis définir un parcours consenti de remplacement/recréation d’une ancienne proposition, avec préservation des accords et des effets distants. Le contrat/prompt actuel n’est pas modifié ici et une simple régénération ne garantit pas à elle seule la présence d’IDs. Un tel choix ne doit pas convertir une ancienne séance publiée ou incertaine en nouvelle séance librement modifiable.
