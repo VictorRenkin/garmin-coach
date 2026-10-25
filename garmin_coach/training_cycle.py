@@ -12,9 +12,15 @@ from .session_blocks import SessionBlock, validate_blocks_duration
 from .ai_provider import structured_completion
 from .ai_analysis import MissingOpenAIKeyError, _sanitized_metrics, load_analysis
 from .config import PLANS_DIR, PROFILE_FILE, Settings, ensure_directories
-from .coach_chat import list_messages
 from .local_activity_history import load_recent_local_activities
 from .storage import load_activities
+
+
+def list_messages():
+    # Conversation now references canonical session contracts. Defer this read
+    # dependency to avoid a training -> chat -> delivery -> training import cycle.
+    from .coach_chat import list_messages as read_messages
+    return read_messages()
 
 
 class PlannedSession(BaseModel):

@@ -21,6 +21,11 @@ from .coach_numeric_presentation import build_numeric_presentation
 from .athlete_memory import MemoryUpdate, apply_memory_updates
 from .config import DATA_DIR, Settings, ensure_directories, current_user_id
 from .conversation_history_search import parse_history_request, search_conversation_history, SPORT_PATTERNS, UNSUPPORTED_SPORT_PATTERN, UNSUPPORTED_SPORT_CLARIFICATION
+from .coach_calendar_context import grounded_v2_calendar_response
+from .coach_session_actions import (
+    SessionActionIntent, SessionActionError, prepare_session_action,
+    cancel_session_action, get_session_action,
+)
 
 
 MESSAGES_FILE = DATA_DIR / "coach_messages.json"
@@ -115,6 +120,7 @@ class SessionPatch(BaseModel):
 
 class CoachResponse(BaseModel):
     calendar_request: CalendarRequest | None = None
+    session_action_v2: SessionActionIntent | None = None
     message: str = Field(min_length=2, max_length=3000)
     source: Literal["ai", "openai", "local"] = "local"
     plan_modifie: bool = False
@@ -133,6 +139,10 @@ class CoachResponse(BaseModel):
 
     @model_validator(mode="after")
     def validate_action(self) -> "CoachResponse":
+        if self.session_action_v2 is not None:
+            if self.action != "none" or self.calendar_request is not None or self.plan_modifie:
+                raise ValueError("Une modification V2 est un brouillon local distinct, sans action historique ni effet immédiat.")
+            self.conversation_state = "awaiting_confirmation"
         if self.calendar_request is not None and self.action != "none":
             raise ValueError("Une demande de calendrier nécessite une proposition validée ; aucune action legacy automatique.")
         if self.action == "update_objective" and self.objective_update is None:
@@ -183,10 +193,35 @@ déclarée n'est pas une preuve médicale ou physiologique. Le moteur V2 revalid
 les horaires, le volume, les collisions et chaque accord individuel ensuite.
 Une demande ambiguë ne doit pas déplacer ou dupliquer une séance legacy. Aucune
 réponse du coach n'accepte une séance à la place du sportif.
-Le champ plan_actif est la source de verite actuelle. S'il contredit un ancien
-message, decris uniquement le plan_actif et explique que l'ancienne proposition
-n'est pas appliquee. Une discussion ou une confirmation textuelle ne prouve
-jamais un changement : seul un dernier evenement d'acceptation appliquee le fait.
+Si calendrier_plan_v2.status vaut available, ses séances sont la référence du
+calendrier V2 affiché au sportif. Utilise leurs objectifs, durées, consignes et
+structures, sans les confondre avec les activités réalisées de l'historique.
+Les champs omis ou une source indisponible sont inconnus, jamais une absence.
+plan_actif reste une source historique séparée ; ne substitue pas ses indices
+aux identités V2. Une séance enregistrée dans Motionest n'est pas nécessairement
+acceptée, créée sur Garmin, programmée ni effectuée : respecte chaque état fourni.
+
+Pour modifier une séance V2, retourne action=none et session_action_v2 :
+session_id exact du contexte, action modify/move/change_time ; utilise
+target_duration_minutes pour une durée, target_date pour déplacer et target_time
+pour changer l'heure. Un déplacement doit conserver ou préciser l'horaire réel.
+Pour une intensité plus facile, fournis un patch cohérent intensity_instruction
+et les blocs utiles ; ne change pas seulement le titre. Pour un raccourcissement
+simple laisse le backend calculer les étapes avec target_duration_minutes.
+Pour des blocs complexes ambigus, pose une question sans proposition.
+Ce champ prépare seulement un aperçu : n'annonce jamais la modification comme
+appliquée. Seuls les boutons Confirmer/Annuler décident du brouillon ; aucune
+publication Garmin n'accompagne une confirmation locale. Une nouvelle acceptation
+de la version modifiée sera requise. Une séance livrée, incertaine, effectuée ou
+refusée peut être bloquée par le serveur : explique la limite sans contournement.
+S'il existe deux séances mardi, demande matin/soir ou l'horaire avant de cibler.
+Utilise la conversation récente pour résoudre « la », « celle du soir », seulement
+si l'intention et l'identité sont non ambiguës ; sinon demande une précision.
+L'ajout et le retrait local V2 ne sont pas actifs : explique qu'un retrait
+modifierait la fréquence confirmée ; refuser une proposition ne la supprime pas.
+Ne propose jamais delete_sessions/create_plan/adapt_plan/modify_session/
+reschedule_session historiques pour agir sur des séances V2.
+Une discussion ou un ancien message ne prouve jamais un changement enregistré.
 
 Tu es le coach multisport conversationnel de Motionest. Réponds en français, clairement,
 en moins de 180 mots. Le contexte contient l'objectif, le plan, les métriques
@@ -414,7 +449,17 @@ def _save_unlocked(messages: list[dict[str, Any]]) -> None:
 
 def list_messages() -> list[dict[str, Any]]:
     with _LOCK:
-        return _load_unlocked()
+        messages = _load_unlocked()
+    # Draft state is authoritative; the chat is only its presentation.
+    user_id = current_user_id()
+    for message in messages:
+        preview = message.get("session_action_preview")
+        if user_id and isinstance(preview, dict) and preview.get("draft_id"):
+            try:
+                message["session_action_preview"] = get_session_action(user_id, preview["draft_id"])
+            except SessionActionError:
+                message["session_action_preview"] = {"status": "unavailable"}
+    return messages
 
 
 def get_message(message_id: str) -> dict[str, Any] | None:
@@ -580,6 +625,13 @@ def _validate_conversation_output(
     response: CoachResponse, request: dict[str, Any], context: dict[str, Any]
 ) -> CoachResponse:
     _validate_message_readability(response.message, str(request.get("content") or ""))
+    if (context.get("calendrier_plan_v2") or {}).get("status") == "available" and response.action in {
+        "modify_session", "reschedule_session", "delete_sessions", "adapt_plan", "create_plan",
+    }:
+        return CoachResponse(
+            message="Cette demande concerne le calendrier V2. Aucune ancienne action de plan ni aucun envoi Garmin n'a été préparé. Précise la séance à modifier pour obtenir un aperçu local.",
+            source=response.source,
+        )
     content = " ".join(str(request.get("content") or "").split()).casefold()
     for update in response.memory_updates:
         if " ".join(update.source_excerpt.split()).casefold() not in content:
@@ -610,6 +662,14 @@ def _validate_conversation_output(
 def generate_response(
     request: dict[str, Any], settings: Settings, context: dict[str, Any]
 ) -> CoachResponse:
+    plain = " ".join(str(request.get("content") or "").casefold().replace(",", " ").strip(" .!? ").split())
+    if current_user_id() and plain in {"annule", "annule finalement", "annule la modification", "annuler"}:
+        for item in reversed(list_messages()):
+            preview = item.get("session_action_preview") or {}
+            if preview.get("status") == "pending":
+                cancel_session_action(current_user_id(), preview["draft_id"])
+                return CoachResponse(message="Brouillon annulé. Le plan n'a pas été modifié.")
+        return CoachResponse(message="Aucun brouillon n'est en attente. Une modification déjà confirmée n'est pas annulée par ce message.")
     reference = (context.get("contexte_multisport") or {}).get("reference_date")
     history_text = str(request.get("content") or "")
     # Recover only a contiguous chain of our explicit historical clarifications.
@@ -728,6 +788,8 @@ def generate_response(
 def _explicit_calendar_action(
     content: str, context: dict[str, Any]
 ) -> CoachResponse | None:
+    if (context.get("calendrier_plan_v2") or {}).get("status") == "available":
+        return None  # V2 identities must never be mapped to historical indexes.
     plain = "".join(
         character
         for character in unicodedata.normalize("NFKD", content.lower())
@@ -765,6 +827,11 @@ def _grounded_current_plan_response(
     content: str, context: dict[str, Any]
 ) -> CoachResponse | None:
     """Answer exact current-plan questions from disk, never from chat history."""
+    v2_message = grounded_v2_calendar_response(content, context)
+    if v2_message is not None:
+        return CoachResponse(message=v2_message, source="local")
+    if (context.get("calendrier_plan_v2") or {}).get("status") == "available":
+        return None
     plain = "".join(
         character
         for character in unicodedata.normalize("NFKD", content.lower())
@@ -1003,6 +1070,16 @@ def store_response(request_id: str, response: CoachResponse) -> dict[str, Any]:
             return existing
         request["status"] = "processed"
         message_text = response.message
+        session_preview = None
+        if response.session_action_v2 is not None:
+            user_id = current_user_id()
+            if not user_id:
+                raise ValueError("Un compte authentifié est requis pour préparer une modification locale.")
+            try:
+                session_preview = prepare_session_action(user_id, response.session_action_v2)
+                message_text = "Voici l'aperçu de la modification locale proposée. Le plan reste inchangé tant que tu n'as pas confirmé. Aucun envoi Garmin ne sera effectué."
+            except SessionActionError as exc:
+                message_text = str(exc)
         if response.action == "modify_session" and not response.plan_modifie:
             message_text = re.sub(
                 r"\best remplac(?:Ã©e|Ã©)\b",
@@ -1036,6 +1113,7 @@ def store_response(request_id: str, response: CoachResponse) -> dict[str, Any]:
                 if response.session_patch
                 else None
             ),
+            "session_action_preview": session_preview,
         }
         messages.append(answer)
         _save_unlocked(messages)

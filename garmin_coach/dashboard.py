@@ -33,6 +33,8 @@ from .ai_analysis import analyze_and_save, load_analysis
 from .activity_data import latest_hr_zone_boundaries, public_detail
 from .athlete_memory import activity_trace, select_relevant_memory
 from .conversation_sport_context import build_conversation_sport_context
+from .coach_calendar_context import build_coach_calendar_context
+from .coach_session_actions import SessionActionError, confirm_session_action, cancel_session_action
 from .coach_chat import (
     add_assistant_prompt,
     claim_action,
@@ -546,6 +548,10 @@ def coach_context() -> dict[str, Any]:
             "content": item.get("content"),
             "action": item.get("action"),
             "action_status": item.get("action_status"),
+            "session_action_preview": (
+                {key: item["session_action_preview"].get(key) for key in ("draft_id", "status")}
+                if isinstance(item.get("session_action_preview"), dict) else None
+            ),
         }
         for item in all_messages[-8:]
         if item.get("role") in {"user", "assistant"}
@@ -610,20 +616,14 @@ def coach_context() -> dict[str, Any]:
     planning_decision: dict[str, Any] | None = None
     calendar_context: dict[str, Any] = {"status": "unavailable"}
     if user_id:
+        # Read the same canonical proposal as the dashboard, independently of
+        # onboarding stage and historical-plan availability.
+        calendar_context = build_coach_calendar_context(user_id)
         try:
             inputs = load_motionest_inputs_v1(user_id)
             canonical_inputs = inputs.model_dump(mode="json")
             journey = build_first_run_journey(user_id)
             planning_decision = journey.get("planning_decision")
-            proposal_payload = journey.get("plan_proposal") or {}
-            proposal = proposal_payload.get("proposal")
-            if proposal_payload.get("status") == "available" and isinstance(proposal, dict):
-                scheduled = proposal.get("sessions") or []
-                calendar_context = {"status": "available", "sessions": [
-                    {key: item.get(key) for key in ("session_id", "date", "starts_at", "duration_minutes")}
-                    for item in scheduled[:7] if isinstance(item, dict)],
-                    "blocked_dates": [day.isoformat() for day in local_calendar_blocked_dates(
-                        date.fromisoformat(proposal["period"]["start"]), date.fromisoformat(proposal["period"]["end"]))]}
         except Exception as exc:
             LOGGER.warning(
                 "Canonical coach context unavailable for %s (%s)",
@@ -2013,26 +2013,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             _json_response(self, {"ok": True, **state.model_dump(mode="json")})
             return
         if path == "/api/plan-proposal/session":
-            user_id = current_user_id()
-            if not user_id:
-                _json_response(self, {"ok": False, "message": "Utilisateur Motionest indisponible."}, 401)
-                return
-            try:
-                content_length = int(self.headers.get("Content-Length", "0"))
-                if not 0 <= content_length <= 65_536:
-                    raise ValueError("Modification de séance trop volumineuse.")
-                body = json.loads(self.rfile.read(content_length) or b"{}")
-                if not isinstance(body, dict):
-                    raise ValueError("Modification de séance invalide.")
-                state = revise_plan_session(user_id, session_id=str(body.get("session_id") or ""),
-                    expected_proposal_fingerprint=str(body.get("proposal_fingerprint") or ""), patch=body.get("patch"))
-            except (ValueError, TypeError, json.JSONDecodeError) as exc:
-                _json_response(self, {"ok": False, "message": str(exc)}, 400)
-                return
-            except PlanProposalError as exc:
-                _json_response(self, {"ok": False, "code": exc.code, "message": str(exc)}, 409)
-                return
-            _json_response(self, {"ok": True, **state.model_dump(mode="json"), "proposal_fingerprint": proposal_fingerprint(state.proposal)})
+            # This previously unwired endpoint must not bypass draft confirmation.
+            _json_response(self, {"ok": False, "code": "confirmation_required",
+                "message": "Demande un aperçu de la modification au coach, puis confirme ce brouillon avant toute écriture locale."}, 409)
             return
         if path == "/api/plan-proposal/decision":
             user_id = current_user_id()
@@ -2351,6 +2334,30 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 {"ok": True, "objective": objective, "message": "Objectif enregistré."},
             )
             return
+        if path in {"/api/coach/session-action/confirm", "/api/coach/session-action/cancel"}:
+            try:
+                content_length = int(self.headers.get("Content-Length", "0"))
+                if not 0 <= content_length <= 4096:
+                    raise ValueError("Confirmation trop volumineuse.")
+                body = json.loads(self.rfile.read(content_length) or b"{}")
+                if not isinstance(body, dict):
+                    raise ValueError("Confirmation invalide.")
+                operation = confirm_session_action if path.endswith("/confirm") else cancel_session_action
+                preview = operation(current_user_id(), str(body.get("draftId") or ""))
+            except SessionActionError as exc:
+                _json_response(self, {"ok": False, "code": exc.code, "message": str(exc)}, 409)
+                return
+            except (ValueError, TypeError, json.JSONDecodeError) as exc:
+                _json_response(self, {"ok": False, "message": str(exc)}, 400)
+                return
+            messages = {
+                "confirmed": "Cette modification locale est confirmée. Aucun envoi Garmin.",
+                "cancelled": "Ce brouillon est annulé ; il n'a pas modifié le plan.",
+                "applying": "L'application a commencé ; vérifie son résultat avant toute autre action.",
+            }
+            _json_response(self, {"ok": True, "preview": preview,
+                "message": messages.get(preview.get("status"), "Vérifie l'état actuel du brouillon.")})
+            return
         if path == "/api/coach/messages":
             try:
                 content_length = int(self.headers.get("Content-Length", "0"))
@@ -2436,6 +2443,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     raise ValueError("Cette proposition a déjà reçu une réponse.")
                 action = answer.get("action")
                 action_onboarding = load_onboarding()
+                if action in {"modify_session", "reschedule_session", "delete_sessions", "adapt_plan"}:
+                    has_v2 = action_onboarding.get("onboarding_version") == 2
+                    try:
+                        has_v2 = has_v2 or get_plan_proposal_state(current_user_id()).status == "available"
+                    except PlanProposalError:
+                        pass  # Historical users without canonical planning inputs remain compatible.
+                    if has_v2:
+                        _json_response(self, {"ok": False, "code": "v2_calendar_action_required",
+                            "message": "Cette ancienne proposition ne peut pas modifier le calendrier V2. Demande un aperçu local de la séance actuelle."}, 409)
+                        return
                 if (action_onboarding.get("discovery_without_garmin") is True and not stored_tokens_available()
                         and action != "update_objective"):
                     _json_response(self, {"ok": False, "code": "garmin_not_connected", "message": "Connecte Garmin avant une action sur un plan; tes déclarations restent modifiables."}, 409)
