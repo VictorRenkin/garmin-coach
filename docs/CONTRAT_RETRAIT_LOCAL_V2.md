@@ -70,3 +70,27 @@ pytest tests/test_coach_session_actions_quality.py tests/test_coach_session_acti
 ```
 
 Soit **19 qualité + 14 développement**, 0 échec, 0 ignoré ; quatre avertissements Pydantic du SDK existants. Aucun défaut inédit reproduit dans cette campagne. L’intégration candidate des lectures, routes et garde des anciennes actions sera vérifiée séparément après son assemblage ; ne pas déduire de ces passes une fonction de retrait active ou une garantie de transaction inter-processus.
+
+## Revue indépendante de la candidate assemblée
+
+Candidate root `03b6de4` intégrée dans la branche qualité pour revue et tests ; delta `2211d82` ensuite relu sans nouvelle campagne large. Les changements applicatifs du delta traitent les erreurs typées de source et journal Garmin en erreurs publiques conservatrices, sans écriture ; l’API de retrait reste absente.
+
+Lecture ciblée :
+
+- L’ancienne route POST `/api/plan-proposal/session` renvoie `409 confirmation_required`. Recherche dans les clients Web/tests/scripts existants : aucun client livré ne l’appelait. `revise_plan_session` reste le backend réutilisé par la confirmation, pas une nouvelle voie d’application UI.
+- Confirmation et annulation sont dans `do_POST`, après authentification ; aucun GET de consultation n’applique un brouillon.
+- `store_response` prépare l’aperçu avant de persister sa réponse et ne modifie pas les trois stores métier. Une panne d’écriture du message après création du brouillon pourrait laisser un brouillon orphelin borné ; elle ne l’applique pas automatiquement. Ce n’est pas une transaction multi-fichiers garantie.
+- Les anciennes mutations par indice sont refusées pour onboarding V2 ou proposition V2 disponible. Le parcours historique sans V2 reste distinct ; cette revue ne prétend pas refondre ses garanties distantes.
+- `list_messages` libère le verrou du chat avant de relire l’autorité des brouillons. L’annulation naturelle relit ces états, au lieu de considérer comme pending un aperçu déjà annulé ou confirmé.
+- Ordre observé des verrous des actions : livraison → proposition → acceptation ; révision : livraison → proposition. Aucun cycle inverse n’est démontré dans les chemins inspectés. Le wrapper différé `training_cycle.list_messages` résout la dépendance d’import sans changement de générateur. Il ne constitue pas une preuve universelle d’absence d’interblocage ou de concurrence inter-processus.
+
+Campagne assemblée :
+
+```text
+pytest tests/test_coach_session_actions_quality.py tests/test_coach_session_actions_web.py -q --disable-warnings
+29 passed, 1 failed, 4 warnings in 11.01s
+```
+
+L’échec concerne `test_anonymous_and_unconfirmed_direct_route_have_no_effect`, lors du POST anonyme JSON sur confirmation : `HTTPConnection.getresponse/read_status` lève `ConnectionAbortedError / WinError 10053` avant l’assertion 401. Une seule reproduction isolée autorisée : **1 échec, 0 réussite, 4 avertissements en 2,87 s**, même étape de transport. Aucun statut d’autorisation incorrect ni mutation n’est démontré par ces échecs. Le refus précoce d’une requête dont le corps n’est pas consommé est un contexte pertinent pour le reset Windows ; la cause système exacte n’est pas prouvée.
+
+Aucune assertion, authentification ou fixture root n’a été modifiée par C pour cacher cet incident. Aucune boucle de relance. Un contrôle sans corps, s’il est retenu par l’orchestrateur, doit être distingué de ces échecs de transport et conserver la preuve initiale. La validation finale root, les scénarios IA et le vrai parcours navigateur restent rapportés séparément ; les 33 passes core précédentes ne sont pas une suite assemblée entièrement verte.
