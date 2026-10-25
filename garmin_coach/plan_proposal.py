@@ -617,12 +617,9 @@ def generate_plan_proposal(
             return _state(source)
 
 
-def revise_plan_session(user_id: str, *, session_id: str, expected_proposal_fingerprint: str,
+def preview_plan_session_revision(user_id: str, *, session_id: str, expected_proposal_fingerprint: str,
                         patch: dict[str, Any], source: PlanGenerationInputV2 | None = None) -> PlanProposalStateV2:
-    """Revise exactly one identified session, reusing proposal validation/storage.
-
-    No acceptance, delivery or modification of another session is performed.
-    """
+    """Validate one complete candidate without writing proposal or decisions."""
     with user_context(user_id), _WRITE_LOCK:
         source = source or build_plan_generation_input_v2(user_id, build_runtime_motionest_context(user_id))
         current = _state(source)
@@ -642,8 +639,20 @@ def revise_plan_session(user_id: str, *, session_id: str, expected_proposal_fing
         validation = validate_plan_proposal(candidate, source)
         if not validation.valid:
             raise PlanProposalError("session_patch_invalid", validation.errors[0].message)
+        return current.model_copy(update={"proposal": candidate})
+
+
+def revise_plan_session(user_id: str, *, session_id: str, expected_proposal_fingerprint: str,
+                        patch: dict[str, Any], source: PlanGenerationInputV2 | None = None) -> PlanProposalStateV2:
+    """Revise exactly one session; serialize with delivery before the plan lock."""
+    # Deferred import keeps the canonical contracts independent at import time.
+    from .garmin_delivery import _WRITE_LOCK as delivery_lock
+    with user_context(user_id), delivery_lock, _WRITE_LOCK:
+        source = source or build_plan_generation_input_v2(user_id, build_runtime_motionest_context(user_id))
+        candidate = preview_plan_session_revision(user_id, session_id=session_id,
+            expected_proposal_fingerprint=expected_proposal_fingerprint, patch=patch, source=source)
         store, diagnostics = _read_store()
         if store is None or diagnostics:
             raise PlanProposalError("proposal_unavailable", "La proposition ne peut pas être sauvegardée.")
-        _write_store(store.model_copy(update={"proposal": candidate}))
+        _write_store(store.model_copy(update={"proposal": candidate.proposal}))
         return _state(source)
