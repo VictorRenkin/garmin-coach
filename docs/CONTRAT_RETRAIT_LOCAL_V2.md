@@ -42,3 +42,31 @@ Ce sont des critères de conception, pas des structures ou fonctions ajoutées a
 `tests/test_coach_session_actions_quality.py` vérifie le refus d’une proposition à deux séances ramenée à une sans changer la fréquence, l’absence de contrat vide, et le rejet d’un pseudo-champ `removed`. Ces tests ne prouvent pas qu’un retrait fonctionne ; ils démontrent pourquoi il reste bloqué sans modification de contrat. Les données sont synthétiques et les chemins redirigés vers un répertoire temporaire.
 
 La suite indépendante des modifications/déplacements sera ajoutée après disponibilité de l’API candidate stabilisée. Aucun développement mobile, appel IA ou Garmin réel, lecture de configuration personnelle, commit sur main, intégration automatique ou push.
+
+## Qualité indépendante du parcours d’actions livré
+
+Checkpoint applicatif B contrôlé : `018e54d57dccaa9e5db66e2203ae5d5c94254021`. API `coach_session_actions` : intentions `modify`, `move`, `change_time`, identité obligatoire, préparation puis confirmation/annulation explicites. Aucune intention de retrait ajoutée.
+
+Le fichier qualité comporte désormais 19 cas, dont les trois constats de contrat ci-dessus. Les 16 autres couvrent :
+
+- Permutation du plan après aperçu : confirmation refusée, aucune autre cible choisie par indice.
+- Modification de la séance du soir : matin et fichier legacy sentinelle inchangés. Cette sentinelle démontre l’absence d’écriture dans l’ancien plan, pas une nouvelle campagne de compatibilité du moteur legacy.
+- Accord ou refus arrivé après préparation : aucune confirmation silencieuse par-dessus cette nouvelle décision.
+- Deux brouillons différents confirmés simultanément : une application, l’autre obsolète ; aucune modification de la sœur.
+- Ancien record distant sans identité, ID confirmé ou intention incertaine : blocage conservateur sans effacer le record.
+- Annulation d’une séance acceptée : plan, journal d’accords et livraison inchangés, compte voisin intact ; confirmation ultérieure du brouillon annulé sans effet. Le statut d’annulation est bien écrit dans le journal des brouillons : ne pas prétendre « aucun fichier écrit ».
+- Candidat à blocs : demande de 25 minutes avec structure de 18 minutes refusée avant écriture ; candidat complet de 18 minutes accepté puis converti en exécutable de 1 080 secondes.
+- Cible par indice, identité inexistante ou booléen à la place d’une durée : refus sans mutation.
+- ID de brouillon d’un autre compte : lecture, confirmation et annulation refusées dans ce compte.
+- Activité apparaissant après l’aperçu : confirmation bloquée, aucune suppression d’activité.
+
+Les fixtures utilisent seulement des données synthétiques sous les chemins temporaires, avec `ROOT_DIR` également redirigé avant chargement éventuel de configuration ; entrée de génération et fournisseur de proposition factices. Les fonctions de validation, journaux, empreintes et révision sont réelles. Aucun appel IA ou Garmin, aucune route de publication remplacée globalement. Les tests de livraison, HTTP et compatibilité existants restent complémentaires ; cette première campagne ne revendique pas une validation navigateur de bout en bout.
+
+Résultats : trois premiers cas contrat **3 réussis en 3,88 s** ; sur le premier checkpoint actions, **15 réussis en 3,40 s** ; sur le module B stabilisé, campagne qualité + développement :
+
+```text
+pytest tests/test_coach_session_actions_quality.py tests/test_coach_session_actions.py -q --disable-warnings
+33 passed, 4 warnings in 5.75s
+```
+
+Soit **19 qualité + 14 développement**, 0 échec, 0 ignoré ; quatre avertissements Pydantic du SDK existants. Aucun défaut inédit reproduit dans cette campagne. L’intégration candidate des lectures, routes et garde des anciennes actions sera vérifiée séparément après son assemblage ; ne pas déduire de ces passes une fonction de retrait active ou une garantie de transaction inter-processus.
