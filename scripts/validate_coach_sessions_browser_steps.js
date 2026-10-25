@@ -40,7 +40,8 @@ async page => {
   results.push({case:'confirm_duration',passed:true,seconds:1500,siblingMinutes:35});
   await shot('03-confirmed-full.png');
   await page.getByRole('link',{name:'Ma semaine',exact:true}).click();
-  await page.locator('#planProposalGrid').getByText('25 min',{exact:true}).waitFor();
+  const displayed = await page.locator('#planProposalGrid [data-plan-session="0"]').innerText();
+  if(!displayed.includes('25 min'))throw Error('Calendar did not display committed duration');
   await shot('04-calendar-25-full.png');
 
   await reset();await send('Raccourcis ma séance du matin à 25 minutes.');await pending();
@@ -53,7 +54,7 @@ async page => {
 
   await reset();await control('published');const beforePublished=await snapshot();
   await send('Raccourcis ma séance du matin à 25 minutes.');
-  await page.getByText('Cette séance peut déjà exister sur Garmin ; modification locale bloquée.',{exact:true}).waitFor({timeout:20000});
+  await page.locator('#messages .bubble.assistant').filter({hasText:'Cette séance peut déjà exister sur Garmin ; modification locale bloquée.'}).waitFor({timeout:20000});
   if(await page.getByRole('button',{name:'Confirmer',exact:true}).count())throw Error('Published session offered confirmation');
   if(await snapshot()!==beforePublished)throw Error('Published session changed canonical files');
   results.push({case:'published',passed:true,canonicalUnchanged:true});
@@ -83,7 +84,7 @@ async page => {
   await reset();await send('Raccourcis ma séance du matin à 25 minutes.');await pending();
   const beforeNaturalCancel=await snapshot();
   await send('Annule, finalement.');
-  await page.getByText("Brouillon annulé. Le plan n'a pas été modifié.",{exact:true}).waitFor({timeout:20000});
+  await page.locator('#messages .bubble.assistant').filter({hasText:"Brouillon annulé. Le plan n'a pas été modifié."}).waitFor({timeout:20000});
   if(await snapshot()!==beforeNaturalCancel)throw Error('Natural cancellation changed canonical files');
   if(await page.getByRole('button',{name:'Confirmer',exact:true}).count())throw Error('Cancelled draft still confirmable');
   results.push({case:'natural_cancel',passed:true,canonicalUnchanged:true});
