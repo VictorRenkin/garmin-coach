@@ -172,6 +172,7 @@ def _patch_for(session, intent):
                 raise SessionActionError("duration_ambiguous", "La durée ne permet pas de conserver échauffement et retour au calme.")
             patch["structure"] = structure.model_dump(mode="json")
             patch["structure"]["effort_minutes"] = effort
+            patch["structure"]["main_set"] = f"Bloc principal de {effort} minutes ; conserver la consigne d'intensité."
         patch["duration_minutes"] = target
     if intent.target_date is not None:
         patch["date"] = intent.target_date.isoformat()

@@ -1,5 +1,4 @@
 """Synthetic local V2 drafts: no model and no real Garmin client."""
-import json
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -7,7 +6,6 @@ import pytest
 from garmin_coach import config, coach_session_actions as actions, plan_proposal, plan_acceptance, garmin_delivery
 from tests.test_calendar_3c import source_for, double_proposal, accept
 from tests.test_plan_proposal import settings
-from tests.test_garmin_delivery import VerifiedClient
 
 
 @pytest.fixture
@@ -62,6 +60,7 @@ def test_confirm_shortens_actual_executable_and_stales_only_its_acceptance(setup
     assert result["status"] == "confirmed"
     current = state()
     assert garmin_delivery.build_plan_session_workout(current.proposal.sessions[0]).estimatedDurationInSecs == 1500
+    assert "15 minutes" in current.proposal.sessions[0].structure.main_set
     assert current.proposal.sessions[1].model_dump(mode="json") == sibling
     assert plan_acceptance.get_plan_acceptance_state(user, proposal_state=current, session_id="morning").status == "stale"
     assert plan_acceptance.get_plan_acceptance_state(user, proposal_state=current, session_id="evening").status == "accepted"
@@ -153,3 +152,45 @@ def test_unknown_fields_and_index_target_are_rejected(setup):
         actions.prepare_session_action(user, dict(action="modify", session_index=0, target_duration_minutes=25))
     with pytest.raises(actions.SessionActionError):
         actions.prepare_session_action(user, dict(action="modify", session_id="morning", patch={"sport": "cycling"}))
+
+
+def test_complex_duration_requires_explicit_full_structure(setup):
+    user, source, state = setup
+    from tests.test_session_blocks_3b import session as complex_session
+    blocks = complex_session(.75)
+    plan_proposal.revise_plan_session(user, session_id="morning", source=source,
+        expected_proposal_fingerprint=plan_proposal.proposal_fingerprint(state().proposal),
+        patch={"structure": blocks.structure.model_dump(mode="json"), "duration_minutes": blocks.duration_minutes})
+    before = snapshot(user)
+    with pytest.raises(actions.SessionActionError) as error:
+        actions.prepare_session_action(user, dict(action="modify", session_id="morning", target_duration_minutes=25))
+    assert error.value.code == "duration_ambiguous" and snapshot(user) == before
+    with pytest.raises(actions.SessionActionError) as error:
+        actions.prepare_session_action(user, dict(action="modify", session_id="morning", patch={"intensity_instruction": "Plus facile."}))
+    assert error.value.code == "intensity_ambiguous"
+    raw = blocks.structure.model_dump(mode="json")
+    raw["blocks"][0]["intensity_instruction"] = "Consigne synthétique adaptée."
+    draft = actions.prepare_session_action(user, dict(action="modify", session_id="morning", patch={"structure": raw}))
+    assert snapshot(user) == before
+    actions.confirm_session_action(user, draft["draft_id"])
+    assert state().proposal.sessions[0].structure.blocks[0].intensity_instruction == "Consigne synthétique adaptée."
+
+
+def test_move_keeps_time_offset_and_sibling_identical(setup):
+    user, source, state = setup
+    # Thursday must already be an allowed canonical date; no availability edit.
+    assert any(day.weekday() == 3 for day in source.allowed_dates)
+    sibling = state().proposal.sessions[1].model_dump(mode="json")
+    draft = actions.prepare_session_action(user, dict(action="move", session_id="morning", target_date="2099-10-15"))
+    assert draft["after"]["starts_at"] == "2099-10-15T08:00:00+02:00"
+    actions.confirm_session_action(user, draft["draft_id"])
+    assert state().proposal.sessions[1].model_dump(mode="json") == sibling
+
+
+def test_decision_changed_after_preview_prevents_confirmation(setup):
+    user, _, state = setup
+    draft = shorten(user)
+    accept(user, state(), "morning")
+    before = snapshot(user)
+    with pytest.raises(actions.SessionActionError) as error: actions.confirm_session_action(user, draft["draft_id"])
+    assert error.value.code == "draft_stale" and snapshot(user) == before
