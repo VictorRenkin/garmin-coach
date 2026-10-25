@@ -2350,6 +2350,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
             except (ValueError, TypeError, json.JSONDecodeError) as exc:
                 _json_response(self, {"ok": False, "message": str(exc)}, 400)
                 return
+            except OSError as exc:
+                LOGGER.warning("Local session action interrupted (%s)", type(exc).__name__)
+                _json_response(self, {"ok": False, "code": "local_action_interrupted",
+                    "message": "Application interrompue. Actualise pour vérifier son résultat ; elle n'est pas déclarée annulée."}, 503)
+                return
             messages = {
                 "confirmed": "Cette modification locale est confirmée. Aucun envoi Garmin.",
                 "cancelled": "Ce brouillon est annulé ; il n'a pas modifié le plan.",

@@ -1,5 +1,7 @@
 """Authenticated Web paths for synthetic V2 drafts; all Garmin access forbidden."""
 import json
+import http.client
+import socket
 from pathlib import Path
 
 import pytest
@@ -8,12 +10,25 @@ from garmin_coach import coach_chat, config, dashboard, user_accounts, plan_prop
 from garmin_coach import coach_session_actions as actions
 from tests.test_coach_session_actions import setup, snapshot, shorten
 from tests.test_onboarding_v2 import _serve
-from tests.test_planning_decision import _request
 from tests.test_calendar_3c import accept
 
 
 def _post(server, cookie, path, payload):
-    return _request(server, 'POST', path, cookie, payload)
+    # Send headers + JSON together: a server may reject authentication before
+    # reading the body. Separate writes intermittently abort on this Windows
+    # test host. Keep the real body and 401 assertion, without delays or retries.
+    body=json.dumps(payload).encode('utf-8')
+    headers=(f'POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{server.server_port}\r\n'
+        f'Content-Type: application/json\r\nContent-Length: {len(body)}\r\n'
+        f'Cookie: {cookie}\r\nConnection: close\r\n\r\n').encode('ascii')
+    with socket.create_connection(('127.0.0.1',server.server_port),timeout=5) as connection:
+        connection.sendall(headers+body)
+        response=http.client.HTTPResponse(connection)
+        response.begin()
+        status=response.status
+        result=json.loads(response.read())
+        response.close()
+    return status,result
 
 
 @pytest.fixture
@@ -134,3 +149,14 @@ def test_web_preview_has_before_after_and_explicit_local_buttons():
     for text in ('sessionActionPreviewMarkup','Actuellement','Après confirmation','data-session-action="confirm"',
                  'data-session-action="cancel"','>Confirmer</button>','>Annuler</button>'):
         assert text in html
+
+
+def test_io_interruption_is_explicit_and_never_claims_cancellation(web,monkeypatch):
+    user,state,server,cookie=web
+    draft=answer(user)['session_action_preview'];before=snapshot(user)
+    def interrupted(*a,**kw):raise OSError('SYNTHETIC_PRIVATE_PATH')
+    monkeypatch.setattr(dashboard,'confirm_session_action',interrupted)
+    status,payload=_post(server,cookie,'/api/coach/session-action/confirm',{'draftId':draft['draft_id']})
+    assert status==503 and payload['code']=='local_action_interrupted'
+    assert "n'est pas déclarée annulée" in payload['message']
+    assert 'PRIVATE' not in json.dumps(payload) and snapshot(user)==before
