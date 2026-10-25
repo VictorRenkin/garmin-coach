@@ -119,7 +119,10 @@ def _digest(value) -> str:
 
 
 def _source(user_id):
-    return plan_proposal.build_plan_generation_input_v2(user_id, plan_proposal.build_runtime_motionest_context(user_id))
+    try:
+        return plan_proposal.build_plan_generation_input_v2(user_id, plan_proposal.build_runtime_motionest_context(user_id))
+    except plan_proposal.PlanProposalError as exc:
+        raise SessionActionError("source_unavailable", "Les informations nécessaires à cette modification sont indisponibles.") from exc
 
 
 def _current(user_id, source):
@@ -142,7 +145,10 @@ def _mutable(user_id, state, session):
     decision = plan_acceptance.get_plan_acceptance_state(user_id, proposal_state=state, session_id=session.session_id)
     if decision.status in {"refused", "revision_requested", "corrupt"}:
         raise SessionActionError("session_decision_blocked", "La décision actuelle ne permet pas cette modification.")
-    records = garmin_delivery._read_store()["deliveries"]
+    try:
+        records = garmin_delivery._read_store()["deliveries"]
+    except garmin_delivery.GarminDeliveryError as exc:
+        raise SessionActionError("delivery_unavailable", "Le suivi Garmin n'est pas vérifiable ; aucune modification appliquée.") from exc
     for record in records.values():
         if not isinstance(record, dict):
             raise SessionActionError("delivery_unavailable", "Le suivi Garmin n'est pas vérifiable.")

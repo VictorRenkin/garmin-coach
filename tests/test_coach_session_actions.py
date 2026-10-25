@@ -7,6 +7,8 @@ from garmin_coach import config, coach_session_actions as actions, plan_proposal
 from tests.test_calendar_3c import source_for, double_proposal, accept
 from tests.test_plan_proposal import settings
 
+ORIGINAL_SOURCE = actions._source
+
 
 @pytest.fixture
 def setup(tmp_path, monkeypatch):
@@ -194,3 +196,28 @@ def test_decision_changed_after_preview_prevents_confirmation(setup):
     before = snapshot(user)
     with pytest.raises(actions.SessionActionError) as error: actions.confirm_session_action(user, draft["draft_id"])
     assert error.value.code == "draft_stale" and snapshot(user) == before
+
+
+@pytest.mark.parametrize("phase", ["prepare", "confirm"])
+@pytest.mark.parametrize("failure", ["source", "delivery"])
+def test_unavailable_source_or_corrupt_delivery_has_typed_refusal_and_no_writes(setup, monkeypatch, phase, failure):
+    user, _, state = setup
+    draft = shorten(user) if phase == "confirm" else None
+    before = snapshot(user)
+    with config.user_context(user):
+        draft_path = actions._path()
+        draft_before = draft_path.read_bytes() if draft_path.is_file() else None
+    if failure == "source":
+        monkeypatch.setattr(actions, "_source", ORIGINAL_SOURCE)
+        monkeypatch.setattr(plan_proposal, "build_runtime_motionest_context", lambda user: None)
+        def unavailable(*args, **kwargs): raise plan_proposal.PlanProposalError("source_bad", "PRIVATE source details")
+        monkeypatch.setattr(plan_proposal, "build_plan_generation_input_v2", unavailable)
+    else:
+        def unavailable(): raise garmin_delivery.GarminDeliveryError("delivery_store_invalid", "PRIVATE delivery details")
+        monkeypatch.setattr(garmin_delivery, "_read_store", unavailable)
+    with pytest.raises(actions.SessionActionError) as error:
+        actions.confirm_session_action(user, draft["draft_id"]) if draft else shorten(user)
+    assert error.value.code == ("source_unavailable" if failure == "source" else "delivery_unavailable")
+    assert "PRIVATE" not in str(error.value) and snapshot(user) == before
+    with config.user_context(user):
+        assert (draft_path.read_bytes() if draft_path.is_file() else None) == draft_before
