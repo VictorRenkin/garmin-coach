@@ -101,7 +101,7 @@ def test_corrupt_journals_do_not_hide_proposal_or_invent_delivery(projected, mon
     assert "PRIVATE" not in json.dumps(calendar)
 
 
-@pytest.mark.parametrize("word", ["Raccourcis", "Déplace", "Supprime", "Annule", "Rends", "Change"])
+@pytest.mark.parametrize("word", ["Raccourcis", "Déplace", "Supprime", "Annule", "Rends", "Change", "Réduis", "Réduire", "Reporte", "Reporter", "Décale", "Ajoute"])
 def test_mutations_are_left_to_confirmation_path(projected, word):
     assert answer(projected(), f"{word} ma séance de mardi") is None
 
@@ -171,3 +171,14 @@ def test_canonical_failure_is_safe_and_legacy_without_projection_preserved(monke
     calendar = module.build_coach_calendar_context("alice")
     assert calendar["source_status"] == "unavailable" and "PRIVATE" not in json.dumps(calendar)
     assert module.grounded_v2_calendar_response("Quel est mon plan actif ?", {"plan_actif": {}}) is None
+
+
+def test_seven_verbose_sessions_fit_coach_message_without_losing_essential_slots(projected):
+    calendar = projected([session(str(i), objective="A" * 240,
+        intensity_instruction="B" * 400) for i in range(7)])
+    text = answer(calendar, "J'ai quoi comme séances cette semaine ?")
+    assert len(text) <= 3000
+    assert "omis" in text and "précise une séance" in text
+    for i in range(7):
+        assert f"identité {i}." in text
+    assert text.count("35 min") == 7

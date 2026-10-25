@@ -109,7 +109,11 @@ def grounded_v2_calendar_response(content: str, context: dict) -> str | None:
                     if not unicodedata.combining(c))
     if not any(word in plain for word in ("seance", "entrainement", "plan actif", "calendrier")):
         return None
-    if any(word in plain for word in ("raccourci", "deplace", "supprim", "retire", "annul", "modifi", "rends", "change", "confirme", "accepte", "refuse")):
+    if any(word in plain for word in (
+        "raccourci", "deplace", "supprim", "retire", "annul", "modifi", "rends", "change",
+        "confirme", "accepte", "refuse", "redui", "report", "rallong", "allong", "ajout",
+        "enlev", "decal", "avanc", "retard", "augment", "diminu", "remplac", "replan", "ecourt",
+    )):
         return None
     calendar = context.get("calendrier_plan_v2")
     if not isinstance(calendar, dict):
@@ -187,4 +191,16 @@ def grounded_v2_calendar_response(content: str, context: dict) -> str | None:
     lines.append("Il s'agit de séances prévues, pas d'activités déjà réalisées.")
     if calendar.get("truncated"):
         lines.append("Contexte partiel : certains détails ou séances ont été omis.")
-    return "\n".join(lines)
+    message = "\n".join(lines)
+    if len(message) > 2800:
+        # Keep every selected date/identity/time/duration; defer verbose prose.
+        lines = []
+        for session in selected:
+            starts = session.get("starts_at")
+            when = datetime.fromisoformat(starts).strftime("%H h %M") if starts else "horaire non renseigné"
+            lines.append(f"{session['date']} {when} — {session.get('duration_minutes')} min, {session.get('sport')}, identité {session.get('session_id') or 'non renseignée'}.")
+        lines.append("Séances prévues enregistrées dans Motionest, pas activités réalisées. Objectifs, intensités et états détaillés omis pour rester dans le budget ; précise une séance. Aucune programmation Garmin n'est établie par cette liste abrégée.")
+        if calendar.get("truncated"):
+            lines.append("Le contexte source est également partiel.")
+        message = "\n".join(lines)
+    return message
