@@ -1,5 +1,8 @@
 # Motionest
 
+> **Première installation ?** Choisis ton guide : **[Mac / macOS](README_MACOS.md)** · **[Windows](README_WINDOWS.md)**.
+> Installation, clé API et ouverture de la page : toutes les commandes sont expliquées pas à pas.
+
 ### Tes courses Garmin deviennent un plan d’entraînement qui évolue avec toi.
 
 Motionest est une application locale pour les coureurs qui veulent comprendre leurs séances et savoir quoi courir ensuite. Elle rassemble ton historique Garmin, détaille chaque sortie, fait analyser tes données par un coach IA et prépare la semaine suivante directement dans Garmin Connect.
@@ -30,48 +33,27 @@ Tableau de bord ← Entraînements Garmin ← Nouveau plan hebdomadaire
 
 L’application fonctionne sur ton ordinateur et s’ouvre dans le navigateur. Le bouton **Actualiser et analyser** importe les nouvelles courses à la demande : aucune synchronisation cachée ne démarre au lancement.
 
-## Démarrage rapide sous Windows
+## Installer Motionest sur ton ordinateur
 
-### 1. Installer
+Chaque personne utilise sa propre copie du projet, son compte Garmin et sa
+clé API. Choisis le README correspondant à ton ordinateur :
 
-Prérequis : **Python 3.11 ou plus récent** et Windows 10/11. Le compte Motionest
-est distinct de Garmin ; un compte Garmin Connect est facultatif pour découvrir
-l'application sans historique.
+| Ton ordinateur | Guide complet |
+| --- | --- |
+| Mac | [README — Installation macOS](README_MACOS.md) |
+| PC Windows 10/11 | [README — Installation Windows](README_WINDOWS.md) |
 
-```powershell
-git clone https://github.com/VictorRenkin/garmin-coach.git
-cd garmin-coach
-python -m venv .venv
-.venv\Scripts\python.exe -m pip install -r requirements.txt
-```
+Chaque guide explique les prérequis, le téléchargement du dépôt (Git ou ZIP),
+l'installation, la saisie de la clé API, la création du compte, la connexion
+Garmin et les commandes pour rouvrir l'application les prochaines fois.
 
-### 2. Connecter Garmin (facultatif)
+Un compte Garmin est facultatif pour découvrir l'application sans historique.
+Après le profil, choisis le parcours de découverte ; tu pourras connecter Garmin
+ensuite sans perdre tes déclarations ni ta conversation. Aucune activité de
+démonstration n'est ajoutée à ton compte.
 
-Pour commencer sans Garmin, passe directement à l'étape 3, crée ton compte
-Motionest et choisis le parcours de découverte après avoir renseigné ton profil.
-Tu pourras connecter Garmin ensuite depuis ce parcours sans perdre tes déclarations
-ni ta conversation. Aucune activité de démonstration n'est ajoutée à ton compte.
-
-Pour une connexion Garmin depuis la ligne de commande :
-
-```powershell
-.\connexion-garmin.cmd
-```
-
-L’adresse, le mot de passe et l’éventuel code de vérification sont demandés de manière interactive. Le mot de passe n’a pas besoin d’être enregistré. Les jetons de session restent dans `.secrets/garmin_tokens/`, hors de Git.
-
-### 3. Ouvrir l’application
-
-```powershell
-.\ouvrir-dashboard.cmd
-```
-
-Le navigateur s'ouvre sur [http://127.0.0.1:8765](http://127.0.0.1:8765).
-Sans Garmin, le dashboard présente ton profil et un historique vide. Avec Garmin
-connecté, le bouton **Actualiser et analyser** permet d'importer tes activités.
-
-L'import et les actions Garmin demandent une connexion Garmin explicite, mais
-pas de clé IA. Le coach conversationnel nécessite un fournisseur IA configuré.
+Python 3.11 ou plus récent est nécessaire. Le serveur démarre localement et le
+navigateur ouvre [http://127.0.0.1:8765](http://127.0.0.1:8765).
 
 ## Ce qui fonctionne selon ta configuration
 
@@ -87,7 +69,15 @@ Sans API, tu peux garder ce projet ouvert dans la même tâche Codex. Le bouton 
 
 ### Activer le coach avec le fournisseur de ton choix
 
-Depuis le tableau de bord, choisis OpenAI, NVIDIA NIM, Groq, OpenRouter, GitHub Models, Gemini ou une autre API compatible OpenAI. Tu peux aussi lancer :
+Depuis le tableau de bord, choisis OpenAI, NVIDIA NIM, Groq, OpenRouter, GitHub Models, Gemini ou une autre API compatible OpenAI. Tu peux aussi lancer, depuis le dossier du projet :
+
+**Mac :**
+
+```bash
+./.venv/bin/python -m garmin_coach.setup_ai
+```
+
+**Windows :**
 
 ```powershell
 .\configurer-ia.cmd
@@ -165,7 +155,7 @@ Les courses rejoignent le même historique et le plan reste visible localement.
 L'import passe par l'export appartenant à l'utilisateur, pas par l'API Strava, et
 aucune séance n'est envoyée vers une montre.
 
-- Le projet cible aujourd’hui Windows et la course à pied.
+- Des guides d’installation locale sont fournis pour macOS et Windows. Les commandes macOS restent à valider sur un Mac réel. Le projet cible la course à pied.
 - La montre doit avoir synchronisé l’activité avec Garmin Connect avant l’import.
 - L’intégration s’appuie sur une interface Garmin Connect non officielle et peut nécessiter une adaptation si Garmin la modifie.
 - L'application dispose de comptes Motionest et d'espaces locaux isolés par utilisateur.
